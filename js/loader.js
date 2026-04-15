@@ -2,21 +2,24 @@
  *
  * Pipeline:
  *   1. User drops a .7z file.
- *   2. libarchive.js (Web Worker) decompresses it into File entries.
- *   3. Locate manifest.json (by basename) → resolve all other paths
- *      relative to the manifest's directory inside the archive.
- *   4. Read PGN raw, parse NDJSON line-by-line for ply records.
- *   5. Decompress .spectralz with native DecompressionStream('gzip'),
- *      validate LARTPSEC magic, build per-ply Float32Array views into
- *      the decompressed buffer (no copy), precompute channel energies.
+ *   2. libarchive.js (Web Worker) walks the archive directory (no byte
+ *      extraction yet) and returns a tree of CompressedFile handles
+ *      via getFilesObject().
+ *   3. Locate manifest.json (by basename), extract only that one entry,
+ *      parse it, and resolve sibling paths relative to its directory.
+ *   4. Index every game in the manifest into corpus.games[i] holding
+ *      *only* path strings. PGN text, NDJSON plies, and spectral data
+ *      are all parsed on demand when a game is selected.
+ *   5. Eager-parse only game[0] so the viewer is interactive on reveal.
  *
- * Progress events emitted via the supplied onProgress callback:
- *   { phase: 'decompress' | 'manifest' | 'pgn' | 'ndjson' | 'spectral'
- *           | 'done' | 'error',
- *     msg: string, fraction: 0..1 }
+ * On selection, ensureGameData(corpus, idx) pulls the NDJSON + spectralz
+ * bytes through the libarchive worker, parses them, and touches an LRU
+ * keyed by gameIndex. When the LRU fills (default 50), older entries'
+ * parsed state is nulled; manifest metadata is never evicted.
  *
- * Spectral data for game 1 is parsed eagerly; other games' spectrals
- * are parsed on first access via parseGameSpectral(corpus, gameIndex).
+ * Progress events via onProgress:
+ *   { phase, msg, fraction }     (throttled to ~10 Hz, guaranteed flush
+ *                                 on 'done' and 'error')
  */
 
 import {
@@ -24,11 +27,18 @@ import {
   channelEnergyForPly,
   parseEvalString,
 } from './spectral.js';
+import { createLRU } from './lru.js';
 
 // Resolved relative to this module so the paths work both from the repo root
 // and from any subdirectory that the site is served from.
 const LIBARCHIVE_URL        = new URL('../lib/libarchive/libarchive.js', import.meta.url).href;
 const LIBARCHIVE_WORKER_URL = new URL('../lib/libarchive/worker-bundle.js', import.meta.url).href;
+
+// Cap on parsed game state (game.spectral + game.plies). Roughly
+// 50 games × ~400KB avg ≈ 20MB retained, which leaves plenty of
+// headroom at 15k-game scale. The currently-active game is pinned
+// so it never evicts even if a user clicks through many others.
+const LRU_CAPACITY = 50;
 
 let _ArchivePromise = null;
 function importArchive() {
@@ -44,116 +54,223 @@ function importArchive() {
 }
 
 /* ------------------------------------------------------------------ *
+ * Progress throttle
+ * ------------------------------------------------------------------ */
+function throttleProgress(onProgress, minIntervalMs = 100) {
+  let last = 0;
+  let pending = null;
+  let rafId = 0;
+  const flush = () => {
+    if (!pending) return;
+    const p = pending;
+    pending = null;
+    last = performance.now();
+    try { onProgress(p); } catch (e) { console.error('onProgress:', e); }
+  };
+  return (phase, msg, fraction) => {
+    pending = { phase, msg, fraction };
+    const now = performance.now();
+    // Always flush terminal phases immediately.
+    if (phase === 'done' || phase === 'error' || now - last > minIntervalMs) {
+      if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
+      flush();
+      return;
+    }
+    if (!rafId) {
+      rafId = requestAnimationFrame(() => { rafId = 0; flush(); });
+    }
+  };
+}
+
+/* ------------------------------------------------------------------ *
  * Public entry point
  * ------------------------------------------------------------------ */
-
 export async function loadCorpusFromFile(file, onProgress = () => {}) {
-  const emit = (phase, msg, fraction) => onProgress({ phase, msg, fraction });
+  const emit = throttleProgress(onProgress);
 
-  emit('decompress', `Decompressing ${file.name} (${formatBytes(file.size)})…`, 0.02);
+  emit('decompress', `Opening ${file.name} (${formatBytes(file.size)})…`, 0.02);
 
-  const fileMap = await extractArchive(file);
-  emit('decompress', `Archive extracted: ${fileMap.size} entries`, 0.18);
+  const handle = await openArchive(file);
+  emit('decompress', `Archive indexed: ${handle.compressedMap.size} entries`, 0.18);
 
-  // Locate manifest.json (by basename) so we tolerate a wrapping directory
-  const manifestEntry = findEntry(fileMap, 'manifest.json');
-  if (!manifestEntry) throw new Error('manifest.json not found in archive');
+  // Locate manifest.json (by basename) so we tolerate a wrapping directory.
+  const manifestRef = findEntry(handle.compressedMap, 'manifest.json');
+  if (!manifestRef) throw new Error('manifest.json not found in archive');
 
-  const baseDir = manifestEntry.dir;
-  const manifest = JSON.parse(await manifestEntry.file.text());
+  const baseDir = manifestRef.dir;
+  const manifestFile = await manifestRef.file.extract();
+  const manifestText = await manifestFile.text();
+  const manifest = JSON.parse(manifestText);
   emit('manifest', `Manifest: ${manifest.games.length} games · run ${manifest.run_id || '—'}`, 0.22);
 
+  // Index every game into a lightweight record. The manifest row itself
+  // (meta) is kept — it drives the corpus table and the info panel.
+  // Bulk payloads (pgn, plies, spectral) are populated lazily on select.
   const games = {};
   const totalGames = manifest.games.length;
-
-  for (let i = 0; i < manifest.games.length; i++) {
+  for (let i = 0; i < totalGames; i++) {
     const g = manifest.games[i];
     const gameIndex = g.index;
-
-    // PGN
-    const pgnEntry = lookup(fileMap, baseDir, g.pgn);
-    const pgn = pgnEntry ? await pgnEntry.text() : null;
-
-    // NDJSON
-    const ndjsonEntry = lookup(fileMap, baseDir, g.ndjson);
-    if (!ndjsonEntry) throw new Error(`Missing ndjson for game ${gameIndex}: ${g.ndjson}`);
-    const plies = parseNdjson(await ndjsonEntry.text());
-
-    // Spectralz file ref (parse lazily, except for first game)
-    const spectralEntry = lookup(fileMap, baseDir, g.spectralz);
-    if (!spectralEntry) throw new Error(`Missing spectralz for game ${gameIndex}: ${g.spectralz}`);
-
     games[gameIndex] = {
       meta: g,
-      pgn,
-      plies,
-      _spectralFile: spectralEntry,    // raw File for lazy parse
-      spectral: null,                  // populated by parseGameSpectral()
+      pgn: null,                       // lazy: ensureGameData
+      plies: null,                     // lazy: ensureGameData
+      spectral: null,                  // lazy: ensureGameData
+      _ndjsonPath:   resolvePath(handle.compressedMap, baseDir, g.ndjson),
+      _pgnPath:      resolvePath(handle.compressedMap, baseDir, g.pgn),
+      _spectralPath: resolvePath(handle.compressedMap, baseDir, g.spectralz),
+      _loadPromise: null,
     };
-
-    const frac = 0.22 + 0.18 * ((i + 1) / totalGames);
-    emit('ndjson', `Parsed game ${gameIndex} · ${plies.length} plies`, frac);
+    // Emit progress at ~10 Hz max — the throttle coalesces per-game calls.
+    if ((i & 63) === 0 || i === totalGames - 1) {
+      const frac = 0.22 + 0.18 * ((i + 1) / totalGames);
+      emit('index', `Indexed ${i + 1}/${totalGames} games`, frac);
+    }
   }
 
-  // Eager-parse spectral data for game 1 so the viewer is immediately interactive
-  const firstIndex = manifest.games[0].index;
-  emit('spectral', `Decoding spectral data for game ${firstIndex}…`, 0.5);
-  await parseGameSpectral({ games, manifest }, firstIndex);
-  emit('spectral', `Spectral data ready for game ${firstIndex}`, 0.85);
-
-  // Augment each manifest game with derived mean_FT for table sort convenience
+  // Augment manifest rows with derived mean_FT for table sort convenience.
   for (const g of manifest.games) {
     g.mean_FT = (g.mean_F1 ?? 0) + (g.mean_F2 ?? 0) + (g.mean_F3 ?? 0);
   }
 
+  const corpus = {
+    manifest,
+    games,
+    sourceName: file.name,
+    sourceSize: file.size,
+    _handle: handle,
+    _lru: null,
+  };
+  corpus._lru = createLRU(LRU_CAPACITY, (evictedIdx) => {
+    const g = corpus.games[evictedIdx];
+    if (!g) return;
+    // Nulling game.spectral drops the 200KB decompressed ArrayBuffer plus
+    // the Float32Array views and the precomputed channelEnergies. Nulling
+    // game.plies drops the parsed NDJSON. _loadPromise is nulled so a
+    // future ensureGameData re-parses instead of resolving to stale nulls.
+    g.spectral = null;
+    g.plies = null;
+    g.pgn = null;
+    g._loadPromise = null;
+  });
+
+  // Eager-parse game 1 so the viewer is immediately interactive.
+  const firstIndex = manifest.games[0].index;
+  emit('spectral', `Decoding game ${firstIndex}…`, 0.5);
+  await ensureGameData(corpus, firstIndex);
+  emit('spectral', `Ready: game ${firstIndex}`, 0.95);
+
   emit('done', 'Ready', 1.0);
-  return { manifest, games, sourceName: file.name, sourceSize: file.size };
+  return corpus;
+}
+
+/** Tear down a corpus: close the libarchive worker and drop parsed state. */
+export async function closeCorpus(corpus) {
+  if (!corpus || !corpus._handle) return;
+  try {
+    await corpus._handle.archive.close();
+  } catch (e) {
+    console.warn('archive.close:', e);
+  }
+  corpus._handle = null;
+  corpus._lru && corpus._lru.clear();
 }
 
 /* ------------------------------------------------------------------ *
- * Lazy spectral parser (called for non-eager games on first selection)
+ * Lazy per-game loader
+ *
+ * Called by app.js on every selectGame (and once at load time for
+ * game 1). Coalesces concurrent calls via game._loadPromise.
  * ------------------------------------------------------------------ */
-export async function parseGameSpectral(corpus, gameIndex) {
+export async function ensureGameData(corpus, gameIndex) {
   const game = corpus.games[gameIndex];
   if (!game) throw new Error(`Unknown game ${gameIndex}`);
-  if (game.spectral) return game.spectral;
+  if (game.plies && game.spectral) {
+    corpus._lru.touch(gameIndex);
+    return game;
+  }
+  if (game._loadPromise) return game._loadPromise;
 
-  const buf = await game._spectralFile.arrayBuffer();
-  const decompressed = await gunzip(buf);
-  const parsed = parseSpectralz(decompressed);
-  game.spectral = enrichSpectral(parsed);
-  return game.spectral;
+  game._loadPromise = (async () => {
+    // NDJSON (per-ply FEN, SAN, eval, clock)
+    if (!game.plies && game._ndjsonPath) {
+      const cf = corpus._handle.compressedMap.get(game._ndjsonPath);
+      if (!cf) throw new Error(`ndjson entry missing: ${game._ndjsonPath}`);
+      const ndjsonFile = await cf.extract();
+      const text = await ndjsonFile.text();
+      game.plies = parseNdjson(text);
+    }
+    // Spectralz (decompressed Float32 lattice)
+    if (!game.spectral && game._spectralPath) {
+      const cf = corpus._handle.compressedMap.get(game._spectralPath);
+      if (!cf) throw new Error(`spectralz entry missing: ${game._spectralPath}`);
+      const spectralFile = await cf.extract();
+      const buf = await spectralFile.arrayBuffer();
+      const decompressed = await gunzip(buf);
+      const parsed = parseSpectralz(decompressed);
+      game.spectral = enrichSpectral(parsed);
+    }
+    // PGN is not needed for the viewer (manifest carries eco/opening/white/
+    // black/result/elo). We leave game.pgn null and board.js's opening
+    // fallback skips the PGN regex path.
+    corpus._lru.touch(gameIndex);
+    return game;
+  })();
+
+  try {
+    return await game._loadPromise;
+  } catch (e) {
+    game._loadPromise = null;    // allow retry
+    throw e;
+  }
 }
 
 /* ------------------------------------------------------------------ *
- * Archive helpers
+ * Back-compat alias for any call site still using parseGameSpectral.
  * ------------------------------------------------------------------ */
+export async function parseGameSpectral(corpus, gameIndex) {
+  const g = await ensureGameData(corpus, gameIndex);
+  return g.spectral;
+}
 
-async function extractArchive(file) {
+/* ------------------------------------------------------------------ *
+ * Archive open: walk the directory (no extraction) via getFilesObject.
+ *
+ * Returns { archive, compressedMap } where compressedMap is
+ * Map<normalizedPath, CompressedFile>. Each CompressedFile's .extract()
+ * round-trips through the libarchive worker to pull just that entry's
+ * bytes on demand.
+ *
+ * The archive instance is kept alive for the session; closing it would
+ * terminate the worker and invalidate every CompressedFile handle. On
+ * reload (see app.js reload-btn teardown), closeCorpus() is called.
+ * ------------------------------------------------------------------ */
+async function openArchive(file) {
   const Archive = await importArchive();
   const archive = await Archive.open(file);
-
-  // extractFiles() materialises every entry as a real File object (vs the
-  // CompressedFile placeholders returned by getFilesObject), which lets us
-  // call .text() / .arrayBuffer() directly without a second extraction round.
-  const tree = await archive.extractFiles();
+  const tree = await archive.getFilesObject();
   const entries = flattenTree(tree);
 
   const map = new Map();
-  for (const { file: f, path } of entries) {
-    if (!f || typeof f === 'string') continue;
-    const norm = normalisePath(path ? `${path}/${f.name}` : f.name);
-    map.set(norm, f);
+  for (const { file: cf, path } of entries) {
+    if (!cf || typeof cf.extract !== 'function') continue;
+    const norm = normalisePath(path ? `${path}/${cf.name}` : cf.name);
+    map.set(norm, cf);
   }
-  return map;
+  return { archive, compressedMap: map };
 }
 
 function flattenTree(tree, prefix = '') {
   const out = [];
   for (const [name, value] of Object.entries(tree)) {
     const here = prefix ? `${prefix}/${name}` : name;
-    if (value instanceof File) out.push({ file: value, path: prefix });
-    else if (value && typeof value === 'object') out.push(...flattenTree(value, here));
+    // Leaf test: CompressedFile exposes .extract(); File does too but we
+    // prefer the duck-typed check to avoid coupling to either class.
+    if (value && typeof value === 'object' && typeof value.extract === 'function') {
+      out.push({ file: value, path: prefix });
+    } else if (value && typeof value === 'object') {
+      out.push(...flattenTree(value, here));
+    }
   }
   return out;
 }
@@ -173,19 +290,24 @@ function findEntry(fileMap, basename) {
   return null;
 }
 
-function lookup(fileMap, baseDir, relPath) {
+/** Resolve a manifest-relative path against the archive's compressed map.
+ *  Returns the normalised key used in the Map, or null if not found.
+ *  We store the string key (not the CompressedFile) on the game record
+ *  so the game object stays cheap and uniform across evictions. */
+function resolvePath(fileMap, baseDir, relPath) {
+  if (!relPath) return null;
   const candidates = [
     baseDir ? `${baseDir}/${relPath}` : relPath,
     relPath,
   ];
   for (const c of candidates) {
     const norm = normalisePath(c);
-    if (fileMap.has(norm)) return fileMap.get(norm);
+    if (fileMap.has(norm)) return norm;
   }
   // Last resort: match by basename
   const want = relPath.split('/').pop();
-  for (const [p, f] of fileMap) {
-    if (p.endsWith('/' + want) || p === want) return f;
+  for (const p of fileMap.keys()) {
+    if (p.endsWith('/' + want) || p === want) return p;
   }
   return null;
 }

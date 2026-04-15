@@ -74,7 +74,8 @@ export function initBoard(rootIds = {
 function handleAction(action) {
   const game = getActiveGame();
   if (!game) return;
-  const n = game.spectral?.nPlies ?? game.plies.length;
+  const n = game.spectral?.nPlies ?? game.plies?.length ?? 0;
+  if (n <= 0) return;
   switch (action) {
     case 'first': setState({ currentPly: 0 }); break;
     case 'prev':  setState({ currentPly: Math.max(0, state.currentPly - 1) }); break;
@@ -97,7 +98,8 @@ function startAutoplay() {
   board.autoplayTimer = setInterval(() => {
     const game = getActiveGame();
     if (!game) return;
-    const n = game.spectral?.nPlies ?? game.plies.length;
+    const n = game.spectral?.nPlies ?? game.plies?.length ?? 0;
+    if (n <= 0) return;
     if (state.currentPly >= n - 1) {
       stopAutoplay();
       return;
@@ -129,36 +131,43 @@ function cycleSpeed() {
 
 function syncBoardToPly() {
   const game = getActiveGame();
-  if (!game) return;
+  // Plies may be unparsed briefly between selectGame being invoked and
+  // ensureGameData resolving. Render the starting position until then
+  // rather than dereferencing a null array.
+  if (!game || !game.plies) {
+    if (board.cb) board.cb.position(STARTING_FEN, false);
+    return;
+  }
   const ply = clampPly(game, state.currentPly);
   const fen = game.plies[ply]?.fen ?? STARTING_FEN;
   board.cb.position(fen, true);
 }
 
 function clampPly(game, ply) {
-  const n = game.spectral?.nPlies ?? game.plies.length;
+  const n = game.spectral?.nPlies ?? game.plies?.length ?? 1;
   return Math.max(0, Math.min(n - 1, ply));
 }
 
 function syncReadout() {
   const game = getActiveGame();
   if (!game) return;
-  const n = game.spectral?.nPlies ?? game.plies.length;
+  const n = game.spectral?.nPlies ?? game.plies?.length ?? 0;
   const el = document.getElementById('board-ply-readout');
-  if (el) el.textContent = `ply ${state.currentPly}/${n - 1}`;
+  if (el) el.textContent = n > 0 ? `ply ${state.currentPly}/${n - 1}` : 'ply —/—';
 }
 
 function syncInfoPanel() {
   const game = getActiveGame();
   if (!game) return;
-  const ply = clampPly(game, state.currentPly);
-  const p = game.plies[ply];
   const m = game.meta;
+  const ply = clampPly(game, state.currentPly);
+  const p = game.plies ? game.plies[ply] : null;
   setText('info-move',
     p && p.san ? `${moveNumberFor(ply)}${p.san}` : '—');
   setText('info-eval',  p?.eval || '—');
   setText('info-clock', p?.clk  || '—');
-  const opening = m.event && m.event.includes('Opening') ? m.event : null;
+  // Manifest already carries eco/opening_name; PGN is no longer eagerly
+  // loaded, so game.pgn is null and the PGN regex fallback is skipped.
   setText('info-opening',
     [m.eco, m.opening_name].filter(Boolean).join(' · ') ||
     extractOpeningFromPgn(game.pgn) || '—');

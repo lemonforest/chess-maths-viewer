@@ -1,5 +1,8 @@
 # Chess Spectral Lattice Fermion Viewer
 
+![version](https://img.shields.io/badge/version-v0.2.0-8b5cf6?style=flat-square)
+![spectralz](https://img.shields.io/badge/spectralz-v2-475569?style=flat-square)
+
 A drop-in spectral analysis instrument for chess corpora. Drop a `.7z`
 spectral corpus onto the page; the browser decompresses, parses, and indexes
 everything client-side, then renders a synchronized chessboard PGN replay,
@@ -13,7 +16,7 @@ server, no build step, no pre-generated data directory.
 
 1. Open `https://lemonforest.github.io/chess-maths-viewer/` (or serve the
    repo root locally — see below).
-2. Drop a `.7z` spectral corpus onto the page, or click "browse".
+2. Click a bundled corpus card, drop a `.7z` onto the page, or click "browse".
 3. Step through plies with `←`/`→`, `Home`/`End`, `Space` to autoplay,
    `1`–`9`/`0` to switch games.
 
@@ -24,7 +27,21 @@ python3 -m http.server 8000
 # open http://localhost:8000
 ```
 
-Any static file server works; there is no Node toolchain or build step.
+Any static file server works; there is no build step required to serve the
+site.
+
+### Bundled corpora
+
+Any `.7z` dropped into `dataset/` becomes a one-click card on the landing
+screen. After adding or removing a file, regenerate the manifest:
+
+```bash
+node scripts/build-dataset-index.mjs
+```
+
+This writes `dataset/index.json`, which the viewer fetches on load to
+populate the BUNDLED CORPORA list. Commit both the `.7z` and the
+regenerated `index.json`.
 
 ### URL state
 
@@ -90,15 +107,19 @@ Pure static site. No framework, no bundler, no Node.
 
 ```
 chess-maths-viewer/
-├── index.html       Entry point, drop zone, viewer shell
-├── css/viewer.css   Dark scientific-instrument theme
+├── index.html            Entry point, drop zone, viewer shell
+├── css/viewer.css        Dark scientific-instrument theme
 ├── js/
-│   ├── app.js       State store, pub/sub, keyboard, URL hash, table, chain
-│   ├── loader.js    .7z extraction, .spectralz parser, NDJSON, manifest
-│   ├── board.js     chessboard.js + chess.js, FEN sync, playback
-│   ├── spectral.js  Channel registry, canvas heatmap renderer
-│   └── charts.js    D3 line chart, eval overlay, crosshair tooltip
-└── lib/             Reserved for vendored fallback libs
+│   ├── app.js            State store, pub/sub, keyboard, URL hash, table, chain
+│   ├── loader.js         .7z extraction, .spectralz parser, NDJSON, manifest
+│   ├── board.js          chessboard.js + chess.js, FEN sync, playback
+│   ├── spectral.js       Channel registry, canvas heatmap renderer
+│   ├── charts.js         D3 line chart, eval overlay, crosshair tooltip
+│   ├── lru.js            LRU eviction for parsed game state
+│   └── virtual-table.js  Virtual scroller for the corpus table
+├── dataset/              Bundled .7z corpora + generated index.json
+├── scripts/              Dev utilities (run with node ≥18)
+└── lib/                  Vendored JS libraries
 ```
 
 External dependencies (CDN, no install required):

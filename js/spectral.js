@@ -129,6 +129,10 @@ export function initHeatmap(rootIds = {
   const ro = new ResizeObserver(() => renderHeatmap());
   ro.observe(heatmap.host);
 
+  // Re-render once web fonts have settled — channel/axis labels change
+  // metrics when the JetBrains Mono swap-in completes.
+  if (document.fonts?.ready) document.fonts.ready.then(() => renderHeatmap());
+
   // Initial render (deferred until corpus is ready)
 }
 
@@ -178,9 +182,16 @@ function renderHeatmap() {
 
   // Layout the panel
   const rect = heatmap.host.getBoundingClientRect();
+  // Defer until layout has produced real dimensions — drawing into a
+  // 100x100 fallback box would leave the canvas visibly stale until any
+  // later interaction triggered a re-render.
+  if (rect.width < 50 || rect.height < 50) {
+    requestAnimationFrame(() => renderHeatmap());
+    return;
+  }
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  const w = Math.max(rect.width, 100);
-  const h = Math.max(rect.height, 100);
+  const w = rect.width;
+  const h = rect.height;
 
   heatmap.canvas.width = Math.round(w * dpr);
   heatmap.canvas.height = Math.round(h * dpr);

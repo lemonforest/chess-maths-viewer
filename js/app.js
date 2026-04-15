@@ -185,6 +185,14 @@ async function startLoad(file) {
     renderChainBreadcrumb();
     setCorpusMeta();
 
+    // Defer the panel-emit kick to the next animation frame so the
+    // browser has performed a full layout pass after the body class
+    // change. Otherwise renderChart/renderHeatmap measure the SVG/canvas
+    // before the grid has settled and draw to a stale viewBox — which
+    // looks like a squished chart until any later interaction triggers
+    // a re-render at the correct size.
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+
     // Notify panels (they were registered for events but we want a kick)
     emit('game');
     emit('heatmapView');

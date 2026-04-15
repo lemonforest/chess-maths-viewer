@@ -68,6 +68,10 @@ export function initChart(ids = {
   subscribe('activeChannels', renderChart);
   subscribe('ply', updatePlyIndicator);
 
+  // Re-render once web fonts have settled — font swaps shift text metrics
+  // and can leave axis labels mis-measured if we drew before they loaded.
+  if (document.fonts?.ready) document.fonts.ready.then(() => renderChart());
+
   const ro = new ResizeObserver(() => renderChart());
   ro.observe(chart.host);
 
@@ -124,8 +128,17 @@ function renderChart() {
   // height (which would cause an unbounded ResizeObserver growth loop in
   // an auto-sized grid row).
   const rect = chart.svg.node().getBoundingClientRect();
-  const w = Math.max(rect.width, 100);
-  const h = Math.max(rect.height, 100);
+  // If the SVG hasn't been laid out yet (e.g. we were called before the
+  // browser performed its first layout pass after viewer reveal), defer
+  // the render to the next animation frame rather than drawing into a
+  // stale 100x100 fallback box that the user would see as a squished
+  // chart until any other interaction triggered a re-render.
+  if (rect.width < 50 || rect.height < 50) {
+    requestAnimationFrame(() => renderChart());
+    return;
+  }
+  const w = rect.width;
+  const h = rect.height;
 
   chart.svg
     .attr('viewBox', `0 0 ${w} ${h}`)

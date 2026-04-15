@@ -117,6 +117,22 @@ function readHash() {
 /* ------------------------------------------------------------------ *
  * Loading flow
  * ------------------------------------------------------------------ */
+/** Filename of the sample corpus shipped at the repo root. */
+const SAMPLE_CORPUS_PATH = './sweep_chain_lichess_drnykterstein_2026-04-14_N10.7z';
+
+/** Fetch the bundled .7z from the repo root and feed it through startLoad. */
+async function loadBundledSample() {
+  const url = new URL(SAMPLE_CORPUS_PATH, document.baseURI).href;
+  const resp = await fetch(url);
+  if (!resp.ok) throw new Error(`HTTP ${resp.status} fetching ${SAMPLE_CORPUS_PATH}`);
+  const blob = await resp.blob();
+  const file = new File([blob], SAMPLE_CORPUS_PATH.split('/').pop(), {
+    type: 'application/x-7z-compressed',
+    lastModified: Date.now(),
+  });
+  return startLoad(file);
+}
+
 async function startLoad(file) {
   document.body.className = 'state-loading';
   document.getElementById('loading-filename').textContent = file.name;
@@ -395,6 +411,22 @@ function setupDropZone() {
   document.getElementById('reload-btn').addEventListener('click', () => {
     document.body.className = 'state-landing';
   });
+
+  // "Load bundled sample" button — fetches the .7z that ships in the repo
+  // root, so visitors can try the viewer without supplying a corpus.
+  const sampleBtn = document.getElementById('load-sample-btn');
+  if (sampleBtn) {
+    sampleBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      sampleBtn.disabled = true;
+      try {
+        await loadBundledSample();
+      } catch (err) {
+        sampleBtn.disabled = false;
+        alert('Could not load bundled sample: ' + (err?.message || err));
+      }
+    });
+  }
 
   // Pending hash note
   const hash = readHash();

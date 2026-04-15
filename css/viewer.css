@@ -254,6 +254,53 @@ button { font-family: inherit; }
 }
 .link-btn:hover { color: var(--accent); }
 
+.drop-actions {
+  margin-top: 28px;
+  display: flex;
+  justify-content: center;
+}
+
+.sample-btn {
+  background: var(--bg-1);
+  color: var(--fg-1);
+  border: 1px solid var(--line-strong);
+  padding: 12px 18px;
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  font-family: var(--font-ui);
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
+}
+.sample-btn:hover {
+  background: var(--bg-2);
+  color: var(--fg-0);
+  border-color: var(--accent-cool);
+  box-shadow: 0 0 18px -8px var(--accent-cool);
+}
+.sample-btn .sample-arrow {
+  color: var(--accent-cool);
+  font-family: var(--font-mono);
+  font-size: 18px;
+  line-height: 1;
+}
+.sample-btn .sample-label {
+  letter-spacing: 0.04em;
+}
+.sample-btn .sample-meta {
+  font-size: 11px;
+  color: var(--fg-3);
+  border-left: 1px solid var(--line);
+  padding-left: 12px;
+  margin-left: 4px;
+}
+.sample-btn:disabled {
+  opacity: 0.5;
+  cursor: progress;
+}
+
 .hash-note {
   margin-top: 24px;
   font-family: var(--font-mono);

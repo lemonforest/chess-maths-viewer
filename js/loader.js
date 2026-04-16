@@ -133,9 +133,15 @@ export async function loadCorpusFromFile(file, onProgress = () => {}) {
     g.mean_FT = (g.mean_F1 ?? 0) + (g.mean_F2 ?? 0) + (g.mean_F3 ?? 0);
   }
 
+  // Game variant: "chess" (default, backwards-compatible) or "othello".
+  // Manifests predating Othello support have no `variant` key; treat those
+  // as chess corpora unchanged.
+  const variant = (manifest.variant || manifest.game || 'chess').toLowerCase();
+
   const corpus = {
     manifest,
     games,
+    variant,
     sourceName: file.name,
     sourceSize: file.size,
     _handle: handle,

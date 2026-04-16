@@ -1,12 +1,21 @@
 {
-  "generated_at": "2026-04-15T20:25:22.996Z",
-  "count": 2,
+  "generated_at": "2026-04-16T03:16:28.765Z",
+  "count": 3,
   "corpora": [
+    {
+      "file": "lichess_broadcast_2022-11.7z",
+      "size": 200523780,
+      "size_human": "191 MB",
+      "mtime": "2026-04-15T21:35:09.607Z",
+      "title": "lichess broadcast 2022-11",
+      "subtitle": "",
+      "tags": []
+    },
     {
       "file": "single_lichess_pgn_2026.04.15_lichess_AI_level_1_vs_lemonforest.eo9BSVgI.7z",
       "size": 76034,
       "size_human": "74.3 KB",
-      "mtime": "2026-04-15T19:25:56.000Z",
+      "mtime": "2026-04-16T03:01:53.273Z",
       "title": "Single game",
       "subtitle": "lichess pgn 2026.04.15 lichess AI level 1 vs lemonforest",
       "tags": [
@@ -17,7 +26,7 @@
       "file": "sweep_chain_lichess_drnykterstein_2026-04-14_N10.7z",
       "size": 537107,
       "size_human": "525 KB",
-      "mtime": "2026-04-15T04:31:22.000Z",
+      "mtime": "2026-04-16T03:01:53.278Z",
       "title": "drnykterstein chain",
       "subtitle": "lichess · 2026-04-14 · 10 games",
       "tags": [

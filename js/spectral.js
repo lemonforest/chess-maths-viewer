@@ -59,6 +59,142 @@ export function channelEnergyForPly(plyModes, channelIndex) {
   return energy;
 }
 
+/**
+ * Build the 8×8 overlay payload for the currently-selected channel at a given
+ * ply, optionally passed through a perceptual transform. Returns null when
+ * there is no single 64-vector to project (ALL / FIBER views) or when
+ * spectral data isn't ready yet.
+ *
+ * Transforms:
+ *   'abs'   — raw mode coefficients; absMax matches js/spectral.js heatmap
+ *             so 1-D ↔ 2-D color parity holds (the original mode).
+ *   'delta' — spec[p] - spec[p-1] per mode (option C: the "force"/gradient
+ *             view; tells you how the channel reacted to the move just
+ *             played). At p=0 every cell is 0 → fully transparent.
+ *   'log'   — sign-preserving log1p compression: emphasizes small/medium
+ *             cells without losing the saturated peaks. Useful when one or
+ *             two modes dominate the absolute view.
+ *   'z'     — per-square temporal z-score against this game's per-mode
+ *             mean/σ; clipped to ±3σ. Highlights moments where a square is
+ *             unusually energetic *for this specific game* rather than its
+ *             absolute magnitude.
+ *
+ * Per-channel/per-game stats (delta absMax, per-mode μ/σ, log scale) are
+ * computed once and cached on `game.spectral._overlayCache`.
+ */
+export const OVERLAY_TRANSFORM_IDS = ['abs', 'delta', 'log', 'z'];
+export const OVERLAY_TRANSFORM_LABELS = {
+  abs: 'abs', delta: 'Δply', log: 'log', z: 'z',
+};
+
+function _getOverlayCache(game, channelId) {
+  const sp = game.spectral;
+  if (!sp._overlayCache) sp._overlayCache = {};
+  if (sp._overlayCache[channelId]) return sp._overlayCache[channelId];
+
+  const ch = CHANNEL_BY_ID[channelId];
+  const { plies, nPlies, valueMinMax } = sp;
+  const start = ch.index * 64;
+
+  const r = valueMinMax?.[channelId] || { min: 0, max: 0 };
+  const rawAbsMax = Math.max(Math.abs(r.min), Math.abs(r.max), 1e-9);
+
+  // Δply absMax: max |spec[p] - spec[p-1]| over all p>=1, m
+  let deltaAbsMax = 1e-9;
+  for (let p = 1; p < nPlies; p++) {
+    const cur = plies[p], prev = plies[p - 1];
+    for (let m = 0; m < 64; m++) {
+      const d = Math.abs(cur[start + m] - prev[start + m]);
+      if (d > deltaAbsMax) deltaAbsMax = d;
+    }
+  }
+
+  // Per-mode μ, σ across plies for z-score
+  const mean = new Float32Array(64);
+  const std  = new Float32Array(64);
+  for (let m = 0; m < 64; m++) {
+    let sum = 0;
+    for (let p = 0; p < nPlies; p++) sum += plies[p][start + m];
+    mean[m] = sum / Math.max(1, nPlies);
+    let v2 = 0;
+    for (let p = 0; p < nPlies; p++) {
+      const d = plies[p][start + m] - mean[m];
+      v2 += d * d;
+    }
+    std[m] = Math.sqrt(v2 / Math.max(1, nPlies)) || 1;
+  }
+
+  // Log compression: choose k so log1p(rawAbsMax/k) maps the peak to a
+  // moderate value; k = rawAbsMax/4 keeps the curve nearly linear near 0
+  // and squashes the upper tail.
+  const logK = Math.max(1e-9, rawAbsMax / 4);
+  const logAbsMax = Math.log1p(rawAbsMax / logK);
+
+  const cache = { rawAbsMax, deltaAbsMax, mean, std, logK, logAbsMax };
+  sp._overlayCache[channelId] = cache;
+  return cache;
+}
+
+export function getOverlayForPly(game, ply, heatmapView, transform = 'abs') {
+  if (!game || !game.spectral) return null;
+  const ch = CHANNEL_BY_ID[heatmapView];
+  if (!ch) return null;  // ALL / FIBER have no single channel
+  const { plies, nPlies } = game.spectral;
+  if (!plies || nPlies <= 0) return null;
+  const p = Math.max(0, Math.min(nPlies - 1, ply | 0));
+  const modes = plies[p];
+  if (!modes) return null;
+
+  const start = ch.index * 64;
+  const cache = _getOverlayCache(game, ch.id);
+  const bySquare = new Float32Array(64);
+  let absMax = cache.rawAbsMax;
+  const mode = OVERLAY_TRANSFORM_IDS.includes(transform) ? transform : 'abs';
+
+  switch (mode) {
+    case 'delta': {
+      absMax = cache.deltaAbsMax;
+      const prev = p > 0 ? plies[p - 1] : null;
+      if (prev) {
+        for (let m = 0; m < 64; m++) bySquare[m] = modes[start + m] - prev[start + m];
+      }
+      // p === 0 → bySquare stays all zeros (fully transparent overlay)
+      break;
+    }
+    case 'log': {
+      absMax = cache.logAbsMax;
+      const k = cache.logK;
+      for (let m = 0; m < 64; m++) {
+        const v = modes[start + m];
+        bySquare[m] = (v < 0 ? -1 : v > 0 ? 1 : 0) * Math.log1p(Math.abs(v) / k);
+      }
+      break;
+    }
+    case 'z': {
+      absMax = 3;  // ±3σ saturates; further is clamped at the renderer
+      for (let m = 0; m < 64; m++) {
+        bySquare[m] = (modes[start + m] - cache.mean[m]) / cache.std[m];
+      }
+      break;
+    }
+    case 'abs':
+    default: {
+      absMax = cache.rawAbsMax;
+      for (let m = 0; m < 64; m++) bySquare[m] = modes[start + m];
+      break;
+    }
+  }
+
+  return {
+    channelId: ch.id,
+    channelLabel: ch.label,
+    transform: mode,
+    transformLabel: OVERLAY_TRANSFORM_LABELS[mode],
+    bySquare,
+    absMax,
+  };
+}
+
 /** Parse a Lichess-style eval string. "+0.18" → 0.18, "-1.50" → -1.50,
  *  "#3" → +10 (mate clamp), "#-2" → -10. Returns null if unparseable. */
 export function parseEvalString(s) {
@@ -439,7 +575,10 @@ function onHeatmapClick(evt) {
  * ------------------------------------------------------------------ */
 // Maps t ∈ [-1, +1] → [r,g,b] (0..255).
 // Negative → cyan, zero → near-black, positive → amber/orange.
-function divergingColor(t) {
+// Exported so the board overlay (js/board.js → js/chess-overlay.js,
+// js/othello-board.js) can paint squares with byte-identical colors to the
+// matching heatmap cell.
+export function divergingColor(t) {
   const a = Math.min(1, Math.abs(t));
   // intensity curve: emphasize low magnitudes a touch (sqrt)
   const k = Math.sqrt(a);

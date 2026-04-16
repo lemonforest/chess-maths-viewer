@@ -84,7 +84,23 @@
       <section id="board-panel" class="panel" aria-label="Chessboard">
         <div class="panel-header">
           <h2>BOARD</h2>
-          <span id="board-ply-readout" class="mono dim">ply 0/0</span>
+          <div class="header-controls">
+            <button data-action="overlay" class="hdr-btn" type="button"
+                    title="Toggle channel overlay on board" aria-pressed="false">⊞</button>
+            <button data-action="plain" class="hdr-btn" type="button"
+                    title="Flatten checker pattern (cleaner overlay)" aria-pressed="false">◻</button>
+            <div class="seg-control" role="group" aria-label="Overlay transform">
+              <button data-tx="abs"   class="seg-btn active" type="button"
+                      title="Raw value / per-channel absMax">abs</button>
+              <button data-tx="delta" class="seg-btn" type="button"
+                      title="Per-ply change (force / gradient)">Δply</button>
+              <button data-tx="log"   class="seg-btn" type="button"
+                      title="Sign-preserving log compression">log</button>
+              <button data-tx="z"     class="seg-btn" type="button"
+                      title="Per-square temporal z-score (anomaly)">z</button>
+            </div>
+            <span id="board-ply-readout" class="mono dim">ply 0/0</span>
+          </div>
         </div>
         <div id="board" class="board-host"></div>
         <div id="board-controls" class="control-row">
@@ -110,9 +126,11 @@
       <section id="heatmap-panel" class="panel" aria-label="Spectral heatmap">
         <div class="panel-header">
           <h2>SPECTRAL HEATMAP</h2>
-          <span id="heatmap-meta" class="mono dim">—</span>
+          <div class="header-controls">
+            <div id="channel-toggles" class="channel-row tight" role="group" aria-label="Heatmap channel"></div>
+            <span id="heatmap-meta" class="mono dim">—</span>
+          </div>
         </div>
-        <div id="channel-toggles" class="channel-row" role="group" aria-label="Heatmap channel"></div>
         <div id="heatmap-host" class="heatmap-host">
           <canvas id="heatmap-canvas"></canvas>
           <svg id="heatmap-overlay" aria-hidden="true"></svg>
@@ -178,7 +196,7 @@
 
   <footer id="footer">
     <span>Chess Spectral Lattice Fermion · mlehaptics project · 2026</span>
-    <span class="mono dim" id="version-tag">viewer v0.2.0 · spectralz v2 · 10 channels × 64 modes</span>
+    <span class="mono dim" id="version-tag">viewer v0.3.0 · spectralz v2 · 10 channels × 64 modes</span>
   </footer>
 
   <script type="module" src="./js/app.js"></script>

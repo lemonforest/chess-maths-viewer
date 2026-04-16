@@ -253,6 +253,11 @@ function stopAutoplay() {
   }
 }
 
+// Exposed so app.js can stop the timer synchronously when switching games
+// via hotkey, without relying on the implicit ordering of the board panel's
+// 'game' subscriber.
+export { stopAutoplay };
+
 function cycleSpeed() {
   const i = board.speeds.indexOf(state.autoplay.intervalMs);
   const next = board.speeds[(i + 1) % board.speeds.length];

@@ -533,8 +533,12 @@ function hitTest(evt) {
 
   const { nPlies } = heatmap.game.spectral;
   const totalRows = heatmap.rowsByChannel.length * 64;
-  const ply = Math.floor((x - heatmap.paddingLeft) / heatmap.contentWidth * nPlies);
-  const row = Math.floor((y - heatmap.paddingTop)  / heatmap.contentHeight * totalRows);
+  // Clamp to valid index range — at the canvas's right/bottom edge the raw
+  // floor() would land on nPlies / totalRows and crash the plies[] lookup.
+  const rawPly = Math.floor((x - heatmap.paddingLeft) / heatmap.contentWidth * nPlies);
+  const rawRow = Math.floor((y - heatmap.paddingTop)  / heatmap.contentHeight * totalRows);
+  const ply = Math.max(0, Math.min(nPlies - 1, rawPly));
+  const row = Math.max(0, Math.min(totalRows - 1, rawRow));
 
   const chIndex = Math.floor(row / 64);
   const modeInChannel = row % 64;

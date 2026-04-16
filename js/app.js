@@ -13,7 +13,7 @@ import {
   refreshHeatmap,
 } from './spectral.js';
 import { initChart, refreshChart } from './charts.js';
-import { initBoard, refreshBoard } from './board.js';
+import { initBoard, refreshBoard, stopAutoplay } from './board.js';
 import { createVirtualTable } from './virtual-table.js';
 
 /** Canonical app version. Bump here, in README, and tag the commit. */
@@ -362,6 +362,11 @@ function sortedGames() {
 
 async function selectGame(index) {
   if (index === state.currentGameIndex) return;
+  // Stop autoplay synchronously before we swap games. The board panel also
+  // stops autoplay in its 'game' subscriber, but that runs after set() emits
+  // — racing with any stale timer tick that fires between selectGame and the
+  // emit. Calling stopAutoplay first removes the ordering dependency.
+  stopAutoplay();
   // Lazy-parse NDJSON + spectral on demand. ensureGameData coalesces
   // concurrent calls on the same index and touches the LRU.
   try {
@@ -581,36 +586,42 @@ function setupKeyboard() {
       case 'ArrowLeft':
         set({ currentPly: Math.max(0, state.currentPly - 1) });
         e.preventDefault();
-        break;
+        return;
       case 'ArrowRight':
         set({ currentPly: Math.min(n - 1, state.currentPly + 1) });
         e.preventDefault();
-        break;
+        return;
       case 'Home':
         set({ currentPly: 0 });
         e.preventDefault();
-        break;
+        return;
       case 'End':
         set({ currentPly: n - 1 });
         e.preventDefault();
-        break;
+        return;
       case ' ':
+        // Let native space-on-button activate when a button is focused;
+        // intercept only when focus is on the body / a non-button element.
+        if (document.activeElement && document.activeElement.tagName === 'BUTTON') return;
         document.querySelector('button[data-action="play"]').click();
         e.preventDefault();
-        break;
+        return;
       case 'Escape':
         if (state.autoplay.running) {
           document.querySelector('button[data-action="play"]').click();
         }
         e.preventDefault();
-        break;
+        return;
     }
 
-    // Game number shortcuts (1–9, 0=10)
+    // Game number shortcuts (1–9, 0=10). Only reached if no switch case fired.
     if (/^[0-9]$/.test(e.key)) {
       const wantIdx = e.key === '0' ? 10 : parseInt(e.key, 10);
       const exists  = state.corpus.games[wantIdx];
-      if (exists) selectGame(wantIdx);
+      if (exists) {
+        selectGame(wantIdx);
+        e.preventDefault();
+      }
     }
   });
 }

@@ -151,6 +151,18 @@ export function createVirtualTable({
   });
   ro.observe(viewport);
 
+  // Re-measure + re-render once web fonts have settled. JetBrains Mono swap
+  // changes row height by a pixel or two, which would otherwise leave the
+  // pad-row math (and the scrollbar) subtly off until the next resize.
+  if (typeof document !== 'undefined' && document.fonts?.ready) {
+    document.fonts.ready.then(() => {
+      if (!state.items.length) return;
+      measureRowHeight();
+      state.renderedRange = { start: -1, end: -1 };
+      scheduleRender();
+    });
+  }
+
   return {
     setItems(items) {
       state.items = items || [];

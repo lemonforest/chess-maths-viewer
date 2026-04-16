@@ -234,6 +234,16 @@ const heatmap = {
   paddingBottom: 22,
   contentHeight: 0,        // pixel height of the heatmap content area
   contentWidth: 0,
+
+  // Off-screen canvas cache. Painting the per-pixel ImageData is the
+  // expensive part of renderHeatmap (O(nPlies × totalRows)); resize-only
+  // re-renders can reuse the bitmap and just blit at the new size.
+  // Keyed by (view, nPlies, totalRows) plus an identity check on the
+  // spectral object reference so a game change, view toggle, or
+  // LRU-evicted spectral re-parse all invalidate it correctly.
+  offCanvas: null,
+  offKey: null,
+  offSpectralRef: null,
 };
 
 export function initHeatmap(rootIds = {
@@ -351,41 +361,55 @@ function renderHeatmap() {
   heatmap.contentWidth = contentW;
   heatmap.contentHeight = contentH;
 
-  // Build the off-screen image at native cell resolution
-  const off = document.createElement('canvas');
-  off.width = nPlies;
-  off.height = totalRows;
-  const offCtx = off.getContext('2d');
-  const img = offCtx.createImageData(nPlies, totalRows);
+  // Off-screen image at native cell resolution. Reused across resize-only
+  // re-renders — only rebuilt when game / view / shape change. Identity is
+  // tracked by the spectral object reference so an LRU re-parse (which
+  // produces a fresh ArrayBuffer + Float32Array views for the same game
+  // index) correctly invalidates the cache.
+  const offKey = `${view}|${nPlies}|${totalRows}`;
+  let off = heatmap.offCanvas;
+  if (!off || heatmap.offKey !== offKey
+      || heatmap.offSpectralRef !== game.spectral
+      || off.width !== nPlies || off.height !== totalRows) {
+    off = document.createElement('canvas');
+    off.width = nPlies;
+    off.height = totalRows;
+    const offCtx = off.getContext('2d');
+    const img = offCtx.createImageData(nPlies, totalRows);
 
-  // For each row's channel, get its global value range
-  const ranges = rowChannels.map((id) => {
-    const r = game.spectral.valueMinMax[id];
-    const m = Math.max(Math.abs(r.min), Math.abs(r.max), 1e-9);
-    return { id, abs: m };
-  });
+    // For each row's channel, get its global value range
+    const ranges = rowChannels.map((id) => {
+      const r = game.spectral.valueMinMax[id];
+      const m = Math.max(Math.abs(r.min), Math.abs(r.max), 1e-9);
+      return { id, abs: m };
+    });
 
-  for (let rowChIdx = 0; rowChIdx < rowChannels.length; rowChIdx++) {
-    const chId = rowChannels[rowChIdx];
-    const ch = CHANNEL_BY_ID[chId];
-    const startMode = ch.index * 64;
-    const absMax = ranges[rowChIdx].abs;
+    for (let rowChIdx = 0; rowChIdx < rowChannels.length; rowChIdx++) {
+      const chId = rowChannels[rowChIdx];
+      const ch = CHANNEL_BY_ID[chId];
+      const startMode = ch.index * 64;
+      const absMax = ranges[rowChIdx].abs;
 
-    for (let m = 0; m < 64; m++) {
-      const y = rowChIdx * 64 + m;
-      for (let p = 0; p < nPlies; p++) {
-        const v = plies[p][startMode + m];
-        const t = Math.max(-1, Math.min(1, v / absMax));
-        const [r, g, b] = divergingColor(t);
-        const off4 = (y * nPlies + p) * 4;
-        img.data[off4]     = r;
-        img.data[off4 + 1] = g;
-        img.data[off4 + 2] = b;
-        img.data[off4 + 3] = 255;
+      for (let m = 0; m < 64; m++) {
+        const y = rowChIdx * 64 + m;
+        for (let p = 0; p < nPlies; p++) {
+          const v = plies[p][startMode + m];
+          const t = Math.max(-1, Math.min(1, v / absMax));
+          const [r, g, b] = divergingColor(t);
+          const off4 = (y * nPlies + p) * 4;
+          img.data[off4]     = r;
+          img.data[off4 + 1] = g;
+          img.data[off4 + 2] = b;
+          img.data[off4 + 3] = 255;
+        }
       }
     }
+    offCtx.putImageData(img, 0, 0);
+
+    heatmap.offCanvas = off;
+    heatmap.offKey = offKey;
+    heatmap.offSpectralRef = game.spectral;
   }
-  offCtx.putImageData(img, 0, 0);
 
   // Draw to main canvas (background fill first)
   const ctx = heatmap.ctx;

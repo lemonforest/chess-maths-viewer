@@ -135,6 +135,19 @@ function readHash() {
  *  scripts/build-dataset-index.mjs — rerun after adding a .7z). */
 const DATASET_INDEX_PATH = './dataset/index.json';
 
+/** Coerce any thrown value into a human-readable string. Plain objects with
+ *  no useful toString() otherwise render as "[object Object]" in alert(). */
+function formatErr(e) {
+  if (e == null) return 'unknown error';
+  if (typeof e === 'string') return e;
+  if (e instanceof Error) return e.message || String(e);
+  if (typeof e === 'object') {
+    if (typeof e.message === 'string' && e.message) return e.message;
+    try { return JSON.stringify(e); } catch { /* fallthrough */ }
+  }
+  return String(e);
+}
+
 /** Fetch a bundled .7z from the dataset/ folder and feed it through startLoad. */
 async function loadBundledCorpus(filename) {
   const url = new URL(`./dataset/${filename}`, document.baseURI).href;
@@ -161,9 +174,14 @@ async function renderDatasetList() {
   let index;
   try {
     const resp = await fetch(DATASET_INDEX_PATH, { cache: 'no-cache' });
-    if (!resp.ok) return;
+    if (!resp.ok) {
+      // 404 is the expected "no bundled corpora" case — stay silent.
+      if (resp.status !== 404) console.warn(`dataset index: HTTP ${resp.status}`);
+      return;
+    }
     index = await resp.json();
-  } catch {
+  } catch (e) {
+    console.warn('dataset index:', formatErr(e));
     return;
   }
   const corpora = Array.isArray(index?.corpora) ? index.corpora : [];
@@ -190,7 +208,7 @@ async function renderDatasetList() {
       try {
         await loadBundledCorpus(c.file);
       } catch (err) {
-        alert(`Could not load ${c.file}: ${err?.message || err}`);
+        alert(`Could not load ${c.file}: ${formatErr(err)}`);
       } finally {
         // Re-enable so the card is clickable again after the user hits
         // "Load corpus" (reload) to return to the landing screen. The
@@ -280,7 +298,7 @@ async function startLoad(file) {
     console.error('corpus load failed:', err);
     const li = document.createElement('li');
     li.className = 'err';
-    li.textContent = 'Failed: ' + (err?.message || err);
+    li.textContent = 'Failed: ' + formatErr(err);
     log.appendChild(li);
     setTimeout(() => { document.body.className = 'state-landing'; }, 3500);
   }
@@ -544,11 +562,18 @@ function setupDropZone() {
   // Reload button — tear down the libarchive worker so we don't leak it
   // across corpora. closeCorpus is async; kick the UI state change
   // immediately and let the worker teardown finish in the background.
-  document.getElementById('reload-btn').addEventListener('click', () => {
+  // Disable the button while teardown is pending so a rapid mash can't
+  // start a second teardown against an already-detached handle.
+  const reloadBtn = document.getElementById('reload-btn');
+  reloadBtn.addEventListener('click', () => {
     const prev = state.corpus;
     state.corpus = null;
     document.body.className = 'state-landing';
-    if (prev) closeCorpus(prev).catch((e) => console.warn('closeCorpus:', e));
+    if (!prev) return;
+    reloadBtn.disabled = true;
+    closeCorpus(prev)
+      .catch((e) => console.warn('closeCorpus:', formatErr(e)))
+      .finally(() => { reloadBtn.disabled = false; });
   });
 
   // Bundled-corpora cards are rendered in init() → renderDatasetList()

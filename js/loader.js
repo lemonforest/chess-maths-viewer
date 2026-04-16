@@ -170,16 +170,22 @@ export async function loadCorpusFromFile(file, onProgress = () => {}) {
   return corpus;
 }
 
-/** Tear down a corpus: close the libarchive worker and drop parsed state. */
+/** Tear down a corpus: close the libarchive worker and drop parsed state.
+ *  Idempotent — safe to call twice; the second call resolves to the first
+ *  call's pending promise so a rapid reload-button mash doesn't double-close. */
 export async function closeCorpus(corpus) {
   if (!corpus || !corpus._handle) return;
-  try {
-    await corpus._handle.archive.close();
-  } catch (e) {
-    console.warn('archive.close:', e);
-  }
-  corpus._handle = null;
-  corpus._lru && corpus._lru.clear();
+  if (corpus._closing) return corpus._closing;
+  corpus._closing = (async () => {
+    try {
+      await corpus._handle.archive.close();
+    } catch (e) {
+      console.warn('archive.close:', e);
+    }
+    corpus._handle = null;
+    corpus._lru && corpus._lru.clear();
+  })();
+  return corpus._closing;
 }
 
 /* ------------------------------------------------------------------ *

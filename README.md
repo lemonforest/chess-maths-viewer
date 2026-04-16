@@ -207,7 +207,8 @@ External dependencies (CDN, no install required):
 
 - [libarchive.js 2.0.2](https://github.com/nika-begiashvili/libarchivejs) — `.7z` decompression
 - Native `DecompressionStream('gzip')` — `.spectralz` decompression
-- [chessboard.js 1.0](https://chessboardjs.com/) + [chess.js 0.13.4](https://github.com/jhlywa/chess.js)
+- [chessboard.js 1.0](https://chessboardjs.com/) — board rendering (FEN-driven; chess.js is **not** loaded — positions come straight from per-ply FENs in the NDJSON)
+- [jQuery 3.7.1](https://jquery.com/) — required by chessboard.js 1.0
 - [D3 v7](https://d3js.org/) — scales, axes, line generators
 
 ## License

@@ -17,7 +17,7 @@ encoder](https://github.com/lemonforest/mlehaptics/tree/main/docs/chess-maths)**
 (Python reference + byte-identical C17 port), part of the broader
 `mlehaptics` research programme that treats chess as a classical lattice
 fermion system — pieces as quantum-numbered particles on a grid-graph
-Laplacian, captures as field-energy redistribution on a shared rank-3 fiber
+Laplacian, captures as field-energy redistribution on a shared rank-5 fiber
 bundle. See [Producing corpora](#producing-corpora) for the encoder CLI and
 [Background](#background) for the theoretical framing.
 

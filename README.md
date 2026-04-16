@@ -23,7 +23,7 @@ bundle. See [Producing corpora](#producing-corpora) for the encoder CLI and
 
 ## Usage
 
-1. Open `https://lemonforest.github.io/chess-maths-viewer/` (or serve the
+1. Open `https://lemonforest.github.io/chess-maths-the-movie/` (or serve the
    repo root locally — see below).
 2. Click a bundled corpus card, drop a `.7z` onto the page, or click "browse".
 3. Step through plies with `←`/`→`, `Home`/`End`, `Space` to autoplay,

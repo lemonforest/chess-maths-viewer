@@ -2,6 +2,7 @@
 
 ![version](https://img.shields.io/badge/version-v0.3.0-8b5cf6?style=flat-square)
 ![spectralz](https://img.shields.io/badge/spectralz-v2-475569?style=flat-square)
+[![CI](https://github.com/lemonforest/chess-maths-the-movie/actions/workflows/ci.yml/badge.svg)](https://github.com/lemonforest/chess-maths-the-movie/actions/workflows/ci.yml)
 
 A drop-in spectral analysis instrument for chess corpora. Drop a `.7z`
 spectral corpus onto the page; the browser decompresses, parses, and indexes
@@ -210,6 +211,27 @@ External dependencies (CDN, no install required):
 - [chessboard.js 1.0](https://chessboardjs.com/) — board rendering (FEN-driven; chess.js is **not** loaded — positions come straight from per-ply FENs in the NDJSON)
 - [jQuery 3.7.1](https://jquery.com/) — required by chessboard.js 1.0
 - [D3 v7](https://d3js.org/) — scales, axes, line generators
+
+## Tests
+
+Two test suites run in CI (see `.github/workflows/ci.yml`):
+
+- **Python** — `pytest -q` exercises the bundled `othello` library
+  (`tests/test_board.py`, `tests/test_svg.py`). Requires the dev extra:
+  `pip install -e '.[dev]'`.
+- **JavaScript** — `npm test` runs a [vitest](https://vitest.dev/)
+  suite under `tests-js/`:
+    - `lru.test.js` — eviction order, pin safety, error tolerance of
+      `js/lru.js`.
+    - `spectral.test.js` — `channelEnergyForPly`, `getOverlayForPly`
+      across the four overlay transforms (abs / Δply / log / z),
+      `parseEvalString`, `divergingColor`.
+    - `virtual-table.test.js` — jsdom-backed check that the virtual
+      scroller renders fewer rows than the full dataset and keeps
+      `.active` exclusive to the matching key.
+
+Install the dev dependencies with `npm install`; they stay under
+`node_modules/` and are not loaded by the viewer at runtime.
 
 ## License
 

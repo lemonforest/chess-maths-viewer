@@ -488,6 +488,15 @@ button { font-family: inherit; }
   box-shadow: inset 0 0 0 2px var(--accent) !important;
 }
 
+/* Plain-board mode: flatten both square shades to a single neutral dark so
+   the channel overlay's low-magnitude tints aren't confused with the checker
+   pattern. Applies to chess (chessboard.js square classes) and othello (SVG
+   square rects keyed by class). */
+#board.plain-board .white-1e1d7,
+#board.plain-board .black-3c85d { background: #1b1b2a !important; }
+#board.plain-board .square.light,
+#board.plain-board .square.dark  { fill: #1b1b2a !important; }
+
 .control-row {
   display: flex;
   gap: 4px;

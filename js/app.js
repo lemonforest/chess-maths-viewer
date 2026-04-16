@@ -31,6 +31,7 @@ export const state = {
   autoplay: { running: false, intervalMs: 500 },
   evalOverlay: true,
   boardOverlay: false,       // project the current heatmap channel onto the board
+  plainBoard: false,         // flatten the checker pattern so overlay tints read cleanly
 
   chartScale: 'z',
   pendingHash: null,        // { game, ply } from URL when corpus not loaded yet

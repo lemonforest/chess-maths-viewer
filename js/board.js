@@ -81,6 +81,15 @@ export function initBoard(rootIds = {
       btn.classList.toggle('active', state.boardOverlay);
     }
   });
+  subscribe('plainBoard', () => {
+    const host = document.getElementById(board.hostId);
+    if (host) host.classList.toggle('plain-board', state.plainBoard);
+    const btn = document.querySelector('button[data-action="plain"]');
+    if (btn) {
+      btn.setAttribute('aria-pressed', state.plainBoard ? 'true' : 'false');
+      btn.classList.toggle('active', state.plainBoard);
+    }
+  });
   subscribe('autoplay', () => {
     const playBtn = document.getElementById(rootIds.play);
     if (state.autoplay.running) {
@@ -185,6 +194,7 @@ function handleAction(action) {
       if (board.driver) board.driver.flip();
       break;
     case 'overlay': setState({ boardOverlay: !state.boardOverlay }); break;
+    case 'plain':   setState({ plainBoard: !state.plainBoard });     break;
   }
 }
 

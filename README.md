@@ -12,6 +12,15 @@ channel energy traces, and an engine eval overlay.
 The site **is** the instrument. The `.7z` **is** the specimen. There is no
 server, no build step, no pre-generated data directory.
 
+**The bytes this viewer renders are produced by the [chess spectral
+encoder](https://github.com/lemonforest/mlehaptics/tree/main/docs/chess-maths)**
+(Python reference + byte-identical C17 port), part of the broader
+`mlehaptics` research programme that treats chess as a classical lattice
+fermion system — pieces as quantum-numbered particles on a grid-graph
+Laplacian, captures as field-energy redistribution on a shared rank-3 fiber
+bundle. See [Producing corpora](#producing-corpora) for the encoder CLI and
+[Background](#background) for the theoretical framing.
+
 ## Usage
 
 1. Open `https://lemonforest.github.io/chess-maths-viewer/` (or serve the
@@ -100,6 +109,78 @@ Channel index → (id, label, semantics):
 Per-channel energy at a ply = Σ (eigenmode value)² over its 64 modes.
 Total fiber energy (`F_T`) = E(F₁) + E(F₂) + E(F₃).
 Chaos ratio χ (per game) = ⟨F_T⟩ / ⟨A₁⟩.
+
+## Producing corpora
+
+This repo is a **consumer** of `.7z` corpus archives — it does not produce
+them. The encoder that makes the `.spectralz` files inside those archives
+lives in the sibling `mlehaptics` repo:
+
+**→ [lemonforest/mlehaptics — `docs/chess-maths/chess-spectral/`](https://github.com/lemonforest/mlehaptics/tree/main/docs/chess-maths/chess-spectral)**
+
+Two implementations ship there, kept byte-identical by a parity test suite
+([`python/tests/test_parity.py`](https://github.com/lemonforest/mlehaptics/blob/main/docs/chess-maths/chess-spectral/python/tests/test_parity.py)):
+
+- **Python reference** — [`chess-spectral/python/`](https://github.com/lemonforest/mlehaptics/tree/main/docs/chess-maths/chess-spectral/python)
+  — `encode_640(pos) → ndarray(640,)`, gzip-transparent `read_encodings()`,
+  CLI via `spectral_py.py`. Use this for REPL / notebook analysis and when
+  developing new channels.
+- **C17 port** — [`chess-spectral/src/`](https://github.com/lemonforest/mlehaptics/tree/main/docs/chess-maths/chess-spectral/src) + [`chess-spectral/include/`](https://github.com/lemonforest/mlehaptics/tree/main/docs/chess-maths/chess-spectral/include)
+  — built via `CMakeLists.txt` into a `spectral` binary for µs/encode batch
+  throughput. `spectral csv` output is bit-for-bit identical to the Python
+  CSV exporter on the same input.
+
+### CLI
+
+`python spectral_py.py <command> [--help]` (or the `spectral` C binary,
+same subcommands):
+
+| Command | Purpose |
+|---|---|
+| `encode-fen --fen "<fen>" [-o out.spectral]` | Encode a single position to a 1-frame file. |
+| `encode -i game.ndjson -o game.spectralz -z` | Encode an NDJSON game (from `pgn_bridge.py`) to a gzip-compressed `.spectralz`. |
+| `csv game.spectralz [-o game.csv]` | Emit the 17-column chat-friendly CSV (inter-frame metrics + channel energies). Auto-picks up a sibling `.ndjson` for eval/clk/NAG columns. |
+| `corpus --pgn FILE [FILE ...] [--run-id NAME] [--encoder {py,c}]` | Wrap one or more local PGNs into a viewer-ready folder (`manifest.json` + `corpus_index.csv` + `pgn/` + `ndjson/` + `spectralz/`). Then archive: `7z a run.7z <run-dir>` and drop into the viewer. |
+| `version` | Print file-format / encoding-dim info. |
+
+Run any subcommand with `--help` for the full flag set — names and defaults
+in the CLI are the source of truth.
+
+### End-to-end from Lichess
+
+[`run_corpus_sweep.py`](https://github.com/lemonforest/mlehaptics/blob/main/docs/chess-maths/run_corpus_sweep.py)
+wires fetch → encode → feature-extract into one step:
+
+```bash
+python docs/chess-maths/run_corpus_sweep.py \
+    --source lichess --username DrNykterstein --n 10 \
+    --run-id lichess_drnykterstein_$(date +%Y-%m-%d)_N10
+# → results/sweep_<run-id>/{manifest.json,pgn/,ndjson/,spectralz/,corpus_index.csv}
+
+7z a sweep_lichess_drnykterstein_$(date +%Y-%m-%d)_N10.7z \
+    results/sweep_lichess_drnykterstein_$(date +%Y-%m-%d)_N10/
+# ↑ manual step today; a packager is coming.
+```
+
+See [`ENCODERS.md`](https://github.com/lemonforest/mlehaptics/blob/main/docs/chess-maths/ENCODERS.md)
+for the full reproduction recipe, encoder lineage, and channel-layout
+reference.
+
+## Background
+
+The 10 channels above are not a feature-engineering choice — they are the
+irreducible components of the 8×8 board Laplacian under D₄ symmetry (A₁,
+A₂, B₁, B₂, E) plus three shared off-diagonal fiber modes (F₁–F₃) and two
+pawn-specific channels (F_A antisymmetric, F_D diagonal deviation). Every
+piece type is uniquely classified by a 5-tuple of spectral quantum numbers;
+captures decompose into movement + annihilation + cross-term with exact
+charge-conjugation signature.
+
+Full theoretical treatment, proofs, and computational verification:
+[`CHESS_SPECTRAL_INSTRUCTIONS.md`](https://github.com/lemonforest/mlehaptics/blob/main/docs/chess-maths/CHESS_SPECTRAL_INSTRUCTIONS.md)
+and
+[`chess_spectral_research_notebook.md`](https://github.com/lemonforest/mlehaptics/blob/main/docs/chess-maths/chess_spectral_research_notebook.md)
+in the `mlehaptics` repo.
 
 ## Architecture
 

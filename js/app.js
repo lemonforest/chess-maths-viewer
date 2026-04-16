@@ -17,7 +17,7 @@ import { initBoard, refreshBoard, stopAutoplay } from './board.js';
 import { createVirtualTable } from './virtual-table.js';
 
 /** Canonical app version. Bump here, in README, and tag the commit. */
-export const APP_VERSION = 'v0.4.0';
+export const APP_VERSION = 'v0.3.1';
 
 /* ------------------------------------------------------------------ *
  * State store

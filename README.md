@@ -2,7 +2,6 @@
 
 ![version](https://img.shields.io/badge/version-v0.3.1-8b5cf6?style=flat-square)
 ![spectralz](https://img.shields.io/badge/spectralz-v2-475569?style=flat-square)
-[![CI](https://github.com/lemonforest/chess-maths-the-movie/actions/workflows/ci.yml/badge.svg)](https://github.com/lemonforest/chess-maths-the-movie/actions/workflows/ci.yml)
 
 A drop-in spectral analysis instrument for chess corpora. Drop a `.7z`
 spectral corpus onto the page; the browser decompresses, parses, and indexes

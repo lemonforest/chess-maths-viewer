@@ -42,11 +42,9 @@ export function attachChessOverlay(hostId) {
   }
 
   function _setBg(el, value) {
-    // The dark-theme tweak in viewer.css uses `background: ... !important`,
-    // which expands to `background-image: none !important`. Inline styles
-    // without !important lose to author !important, so we must mark the
-    // overlay tint important to win.
-    if (value) el.style.setProperty('background-image', value, 'important');
+    // viewer.css sets background-color on squares (not the shorthand), so
+    // background-image is untouched and inline styles win without !important.
+    if (value) el.style.backgroundImage = value;
     else       el.style.removeProperty('background-image');
   }
 

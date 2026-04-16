@@ -330,14 +330,16 @@ function resolvePath(fileMap, baseDir, relPath) {
 function parseNdjson(text) {
   const lines = text.split('\n');
   const plies = [];
+  let skipped = 0;
   for (const line of lines) {
     if (!line) continue;
     let obj;
-    try { obj = JSON.parse(line); } catch { continue; }
+    try { obj = JSON.parse(line); } catch { skipped++; continue; }
     if (obj.bridge_version || obj.type === 'game_header') continue;
-    if (typeof obj.ply !== 'number') continue;
+    if (typeof obj.ply !== 'number') { skipped++; continue; }
     plies.push(obj);
   }
+  if (skipped) console.warn(`parseNdjson: skipped ${skipped} malformed line(s)`);
   // Ensure ply array is dense + ordered
   plies.sort((a, b) => a.ply - b.ply);
   return plies;

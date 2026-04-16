@@ -58,7 +58,7 @@ export function emit(event) {
 /** Apply a partial state update and emit events for whatever changed.
  *  Emits both the canonical key name and short aliases (game, ply). */
 export function set(patch) {
-  let changed = new Set();
+  const changed = new Set();
   for (const [k, v] of Object.entries(patch)) {
     if (v && typeof v === 'object') {
       state[k] = v;          // always treat object updates as changes

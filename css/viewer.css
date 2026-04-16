@@ -471,6 +471,46 @@ button { font-family: inherit; }
   color: var(--fg-1);
 }
 
+/* Indeterminate "switching game" indicator tucked into the CORPUS title
+   bar. Takes its gradient from the main corpus-load progress-bar
+   (#progress-fill) so the two loading affordances read as one family. */
+.corpus-switching {
+  display: inline-block;
+  width: 72px;
+  height: 2px;
+  margin: 0 4px;
+  background: var(--bg-3);
+  overflow: hidden;
+  position: relative;
+  opacity: 0;
+  transition: opacity 120ms ease;
+  pointer-events: none;
+}
+.corpus-switching.active { opacity: 1; }
+.corpus-switching::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--accent-cool) 35%,
+    var(--accent) 65%,
+    transparent 100%
+  );
+  transform: translateX(-100%);
+  animation: corpus-switching-slide 900ms linear infinite;
+  animation-play-state: paused;
+}
+.corpus-switching.active::before { animation-play-state: running; }
+@keyframes corpus-switching-slide {
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(100%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .corpus-switching::before { animation: none; transform: none; }
+}
+
 /* Inline controls tucked into a panel's title bar (board overlay buttons,
    heatmap channel picker, etc.). Same pattern as `.chart-controls`, just
    scoped so the sibling <h2> and the controls cleanly split the row. */

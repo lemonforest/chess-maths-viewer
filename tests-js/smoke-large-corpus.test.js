@@ -158,12 +158,19 @@ function buildFakeCorpus(n = CORPUS_SIZE, { extractDelayMs } = {}) {
 /* selectGame shim mirroring app.js:381. We don't import app.js because it
  * would drag in board.js / charts.js / chess-overlay.js whose listeners
  * aren't under test here and would require heavier mocking. The shim is
- * a faithful transcription of the code path under scrutiny. */
+ * a faithful transcription of the code path under scrutiny — including
+ * the sequence-token guard that drops stale completions. Keep this in
+ * sync with the production selectGame. */
 function makeSelector(corpus, vt) {
   let currentIndex = null;
+  let token = 0;
   async function selectGame(index) {
     if (index === currentIndex) return;
+    const mine = ++token;
     await ensureGameData(corpus, index);
+    // Drop stale completion: a newer click bumped the token while we
+    // awaited, so it owns the state mutation.
+    if (mine !== token) return;
     if (currentIndex != null) corpus._lru.unpin(currentIndex);
     corpus._lru.pin(index);
     currentIndex = index;
@@ -259,12 +266,11 @@ describe('smoke: large corpus game switching', () => {
     expect(vt.getActive()).toBe(last);
   });
 
-  // NOTE: marked `it.fails` because this scenario DELIBERATELY reproduces
-  // a known, currently-unfixed regression. `it.fails` passes when the
-  // inner `expect` throws — so CI stays green while the test documents
-  // the bug. When the race is fixed in selectGame/ensureGameData, this
-  // will flip to red, alerting us to upgrade it to a normal `it`.
-  it.fails('scenario 3b: non-FIFO extract latency reproduces last-click-loses race (KNOWN BUG)', async () => {
+  // Regression test for the last-click-loses race: overlapping clicks
+  // whose backing extract() finishes out-of-order must still land on
+  // the last-clicked index. Guard lives in selectGame's sequence token
+  // (js/app.js, mirrored in makeSelector above).
+  it('scenario 3b: non-FIFO extract latency still settles on the last-clicked index', async () => {
     // Inverted latency: the LATER the click, the FASTER it resolves. This
     // is the classic production pattern where a cold-cache click on an
     // earlier-requested game takes longer than a subsequent click on a

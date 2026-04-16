@@ -378,21 +378,36 @@ function sortedGames() {
   return games;
 }
 
+// Monotonic sequence token for selectGame. Each click bumps it; a stale
+// completion whose token no longer matches is dropped so it can't
+// overwrite state.currentGameIndex with a racing earlier click's index.
+// Needed because on the 15k-game lichess broadcast corpus per-game
+// extract latency varies enough that overlapping clicks can resolve
+// out-of-order (see tests-js/smoke-large-corpus.test.js scenario 3b).
+let _selectGameToken = 0;
+
 async function selectGame(index) {
   if (index === state.currentGameIndex) return;
+  const token = ++_selectGameToken;
   // Stop autoplay synchronously before we swap games. The board panel also
   // stops autoplay in its 'game' subscriber, but that runs after set() emits
   // — racing with any stale timer tick that fires between selectGame and the
   // emit. Calling stopAutoplay first removes the ordering dependency.
   stopAutoplay();
+  setCorpusSwitching(true);
   // Lazy-parse NDJSON + spectral on demand. ensureGameData coalesces
   // concurrent calls on the same index and touches the LRU.
   try {
     await ensureGameData(state.corpus, index);
   } catch (e) {
     console.error('game data load failed:', e);
+    if (token === _selectGameToken) setCorpusSwitching(false);
     return;
   }
+  // If a newer click has bumped the token while we were awaiting, drop
+  // this completion — the later click is already in flight and will run
+  // the state mutation itself. This prevents the last-click-loses race.
+  if (token !== _selectGameToken) return;
   // Repin: active game must never evict even if many others are clicked.
   state.corpus._lru.unpin(state.currentGameIndex);
   state.corpus._lru.pin(index);
@@ -402,6 +417,18 @@ async function selectGame(index) {
   // only — O(visible) rather than O(corpus).
   if (corpusTable) corpusTable.setActive(index);
   renderChainBreadcrumb();
+  setCorpusSwitching(false);
+}
+
+/** Toggle the indeterminate progress indicator in the CORPUS title bar.
+ *  Mirrors, in spirit, the initial corpus-load progress bar — same
+ *  cool→warm gradient — so the user has a consistent visual vocabulary
+ *  for "data is being fetched/parsed". No-op when the element isn't in
+ *  the DOM (e.g. under tests). */
+function setCorpusSwitching(on) {
+  const el = document.getElementById('corpus-switching');
+  if (!el) return;
+  el.classList.toggle('active', !!on);
 }
 
 function resultClass(r) {

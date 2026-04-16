@@ -48,7 +48,9 @@ export function initChart(ids = {
   });
   subscribe('chartScale', () => {
     document.querySelectorAll('.seg-control [data-scale]').forEach((btn) => {
-      btn.classList.toggle('active', btn.dataset.scale === state.chartScale);
+      const active = btn.dataset.scale === state.chartScale;
+      btn.classList.toggle('active', active);
+      btn.setAttribute('aria-pressed', active ? 'true' : 'false');
     });
     renderChart();
   });

@@ -91,12 +91,16 @@
                     title="Flatten checker pattern (cleaner overlay)" aria-pressed="false">◻</button>
             <div class="seg-control" role="group" aria-label="Overlay transform">
               <button data-tx="abs"   class="seg-btn active" type="button"
+                      aria-pressed="true"
                       title="Raw value / per-channel absMax">abs</button>
               <button data-tx="delta" class="seg-btn" type="button"
+                      aria-pressed="false"
                       title="Per-ply change (force / gradient)">Δply</button>
               <button data-tx="log"   class="seg-btn" type="button"
+                      aria-pressed="false"
                       title="Sign-preserving log compression">log</button>
               <button data-tx="z"     class="seg-btn" type="button"
+                      aria-pressed="false"
                       title="Per-square temporal z-score (anomaly)">z</button>
             </div>
             <span id="board-ply-readout" class="mono dim">ply 0/0</span>
@@ -144,9 +148,9 @@
           <div class="chart-controls">
             <div id="chart-channel-toggles" class="channel-row tight" role="group" aria-label="Trace channels"></div>
             <div class="seg-control" role="group" aria-label="Y-axis scale">
-              <button data-scale="z"      class="seg-btn active" type="button">z-score</button>
-              <button data-scale="log"    class="seg-btn" type="button">log</button>
-              <button data-scale="linear" class="seg-btn" type="button">linear</button>
+              <button data-scale="z"      class="seg-btn active" type="button" aria-pressed="true">z-score</button>
+              <button data-scale="log"    class="seg-btn" type="button" aria-pressed="false">log</button>
+              <button data-scale="linear" class="seg-btn" type="button" aria-pressed="false">linear</button>
             </div>
             <label class="overlay-toggle">
               <input id="eval-overlay-toggle" type="checkbox" checked>

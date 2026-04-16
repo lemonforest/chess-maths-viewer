@@ -102,7 +102,9 @@ export function initBoard(rootIds = {
     // Seg-control: mark the active transform, matching the chart panel's
     // z-score/log/linear pattern (see charts.js).
     document.querySelectorAll('#board-panel .seg-control [data-tx]').forEach((btn) => {
-      btn.classList.toggle('active', btn.dataset.tx === state.overlayTransform);
+      const active = btn.dataset.tx === state.overlayTransform;
+      btn.classList.toggle('active', active);
+      btn.setAttribute('aria-pressed', active ? 'true' : 'false');
     });
   });
   subscribe('plainBoard', () => {

@@ -17,6 +17,8 @@
  * between them without the rest of the viewer noticing.
  */
 
+import { divergingColor } from './spectral.js';
+
 const SQUARE_SIZE = 45;
 const MARGIN = 20;
 const DISC_RADIUS = 20;
@@ -51,9 +53,11 @@ export function createOthelloDriver(hostId) {
   let svgEl = null;
   let discsGroup = null;
   let squaresGroup = null;
+  let overlayGroup = null;
   let whiteBottom = true;       // orientation: white-at-bottom by default (mirrors chess.svg)
   let currentBoardStr = STARTING_BOARD;
   let currentLastSq = null;     // 0..63 or null
+  let currentOverlay = null;    // { bySquare: Float32Array(64), absMax } | null
 
   function init(rootId = hostId) {
     host = document.getElementById(rootId);
@@ -90,9 +94,15 @@ export function createOthelloDriver(hostId) {
     _render();
   }
 
+  function setOverlay(data) {
+    currentOverlay = data || null;
+    _renderOverlay();
+  }
+
   function destroy() {
     if (host) host.innerHTML = '';
     host = null; svgEl = null; discsGroup = null; squaresGroup = null;
+    overlayGroup = null; currentOverlay = null;
   }
 
   /* ---------------- internals ---------------- */
@@ -134,6 +144,12 @@ export function createOthelloDriver(hostId) {
 
     const coords = _buildCoordinates(svgNS);
     g.appendChild(coords);
+
+    // Channel overlay (between squares and pieces so discs stay legible)
+    overlayGroup = document.createElementNS(svgNS, 'g');
+    overlayGroup.setAttribute('class', 'board-overlay');
+    overlayGroup.setAttribute('pointer-events', 'none');
+    g.appendChild(overlayGroup);
 
     discsGroup = document.createElementNS(svgNS, 'g');
     discsGroup.setAttribute('class', 'pieces');
@@ -205,7 +221,34 @@ export function createOthelloDriver(hostId) {
   function _render() {
     _renderCoordinates();
     _renderSquares();
+    _renderOverlay();
     _renderDiscs();
+  }
+
+  function _renderOverlay() {
+    if (!overlayGroup) return;
+    overlayGroup.innerHTML = '';
+    if (!currentOverlay) return;
+    const { bySquare, absMax } = currentOverlay;
+    const inv = absMax > 0 ? 1 / absMax : 0;
+    const svgNS = 'http://www.w3.org/2000/svg';
+    for (let sq = 0; sq < 64; sq++) {
+      const v = bySquare[sq];
+      let t = v * inv;
+      if (t < -1) t = -1; else if (t > 1) t = 1;
+      const alpha = Math.abs(t);
+      if (alpha <= 0) continue;
+      const [r, g, b] = divergingColor(t);
+      const { x, y } = _squareXY(sq);
+      const rect = document.createElementNS(svgNS, 'rect');
+      rect.setAttribute('x', String(x));
+      rect.setAttribute('y', String(y));
+      rect.setAttribute('width', String(SQUARE_SIZE));
+      rect.setAttribute('height', String(SQUARE_SIZE));
+      rect.setAttribute('fill', `rgb(${r},${g},${b})`);
+      rect.setAttribute('fill-opacity', String(alpha));
+      overlayGroup.appendChild(rect);
+    }
   }
 
   function _renderSquares() {
@@ -255,5 +298,5 @@ export function createOthelloDriver(hostId) {
     return (r << 3) | f;
   }
 
-  return { init, setPosition, resize, flip, destroy };
+  return { init, setPosition, resize, flip, setOverlay, destroy };
 }

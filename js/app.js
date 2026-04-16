@@ -30,6 +30,8 @@ export const state = {
   heatmapView: 'A1',
   autoplay: { running: false, intervalMs: 500 },
   evalOverlay: true,
+  boardOverlay: false,       // project the current heatmap channel onto the board
+
   chartScale: 'z',
   pendingHash: null,        // { game, ply } from URL when corpus not loaded yet
   tableSort: { key: 'index', dir: 'asc' },

@@ -18,6 +18,8 @@
 
 import { state, on as subscribe, set as setState, getActiveGame } from './app.js';
 import { createOthelloDriver } from './othello-board.js';
+import { attachChessOverlay } from './chess-overlay.js';
+import { getOverlayForPly } from './spectral.js';
 
 const STARTING_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 
@@ -60,6 +62,7 @@ export function initBoard(rootIds = {
     syncBoardToPly();
     syncInfoPanel();
     syncReadout();
+    syncOverlay();
   });
   subscribe('game', () => {
     _ensureDriverForActiveCorpus();
@@ -67,6 +70,16 @@ export function initBoard(rootIds = {
     syncBoardToPly();
     syncInfoPanel();
     syncReadout();
+    syncOverlay();
+  });
+  subscribe('heatmapView', syncOverlay);
+  subscribe('boardOverlay', () => {
+    syncOverlay();
+    const btn = document.querySelector('button[data-action="overlay"]');
+    if (btn) {
+      btn.setAttribute('aria-pressed', state.boardOverlay ? 'true' : 'false');
+      btn.classList.toggle('active', state.boardOverlay);
+    }
   });
   subscribe('autoplay', () => {
     const playBtn = document.getElementById(rootIds.play);
@@ -106,6 +119,7 @@ function _createChessDriver(hostId) {
   // Thin adapter around chessboard.js so board.js sees the same interface as
   // the othello driver.
   let cb = null;
+  let overlay = null;
   return {
     init(id = hostId) {
       cb = window.Chessboard(id, {
@@ -117,6 +131,7 @@ function _createChessDriver(hostId) {
         snapSpeed: 0,
         appearSpeed: 100,
       });
+      overlay = attachChessOverlay(id);
     },
     setPosition(ply) {
       if (!cb) return;
@@ -125,8 +140,14 @@ function _createChessDriver(hostId) {
       cb.position(fen, true);
     },
     resize() { if (cb) cb.resize(); },
-    flip()   { if (cb) cb.flip(); },
+    flip()   {
+      if (cb) cb.flip();
+      if (overlay) overlay.setFlipped(board.flipped);
+    },
+    setOverlay(data) { if (overlay) overlay.setOverlay(data); },
     destroy() {
+      if (overlay) { try { overlay.destroy(); } catch (e) { /* best-effort */ } }
+      overlay = null;
       if (cb && typeof cb.destroy === 'function') {
         try { cb.destroy(); } catch (e) { /* chessboard.js destroy is best-effort */ }
       }
@@ -160,9 +181,10 @@ function handleAction(action) {
     case 'play':  toggleAutoplay(); break;
     case 'speed': cycleSpeed(); break;
     case 'flip':
-      if (board.driver) board.driver.flip();
       board.flipped = !board.flipped;
+      if (board.driver) board.driver.flip();
       break;
+    case 'overlay': setState({ boardOverlay: !state.boardOverlay }); break;
   }
 }
 
@@ -211,6 +233,20 @@ function cycleSpeed() {
 /* ------------------------------------------------------------------ *
  * Sync helpers
  * ------------------------------------------------------------------ */
+
+function syncOverlay() {
+  if (!board.driver || typeof board.driver.setOverlay !== 'function') return;
+  if (!state.boardOverlay) {
+    board.driver.setOverlay(null);
+    return;
+  }
+  const game = getActiveGame();
+  // getOverlayForPly returns null for ALL/FIBER views or missing data,
+  // which the drivers treat as "hide overlay". The toggle button's pressed
+  // state is preserved so returning to a single-channel view re-shows it.
+  const data = getOverlayForPly(game, state.currentPly, state.heatmapView);
+  board.driver.setOverlay(data);
+}
 
 function syncBoardToPly() {
   const game = getActiveGame();

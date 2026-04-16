@@ -59,6 +59,41 @@ export function channelEnergyForPly(plyModes, channelIndex) {
   return energy;
 }
 
+/**
+ * Build the 8×8 overlay payload for the currently-selected channel at a given
+ * ply. Returns null when there is no single 64-vector to project (ALL / FIBER
+ * views) or when spectral data isn't ready yet.
+ *
+ * The returned `t` values are identical to the ones the heatmap uses at
+ * js/spectral.js renderHeatmap() — `t = clamp(v/absMax, -1, 1)` with
+ * `absMax = max(|min|, |max|)` from the precomputed per-channel range. Pairing
+ * `t` with divergingColor(t) yields byte-identical hues between the 1-D
+ * heatmap cell and the corresponding 8-by-8 overlay square, which is the
+ * whole point of the overlay.
+ */
+export function getOverlayForPly(game, ply, heatmapView) {
+  if (!game || !game.spectral) return null;
+  const ch = CHANNEL_BY_ID[heatmapView];
+  if (!ch) return null;  // ALL / FIBER have no single channel
+  const { plies, nPlies, valueMinMax } = game.spectral;
+  if (!plies || nPlies <= 0) return null;
+  const p = Math.max(0, Math.min(nPlies - 1, ply | 0));
+  const modes = plies[p];
+  if (!modes) return null;
+  const range = valueMinMax?.[ch.id];
+  if (!range) return null;
+  const absMax = Math.max(Math.abs(range.min), Math.abs(range.max), 1e-9);
+  const start = ch.index * 64;
+  const bySquare = new Float32Array(64);
+  for (let m = 0; m < 64; m++) bySquare[m] = modes[start + m];
+  return {
+    channelId: ch.id,
+    channelLabel: ch.label,
+    bySquare,
+    absMax,
+  };
+}
+
 /** Parse a Lichess-style eval string. "+0.18" → 0.18, "-1.50" → -1.50,
  *  "#3" → +10 (mate clamp), "#-2" → -10. Returns null if unparseable. */
 export function parseEvalString(s) {
@@ -439,7 +474,10 @@ function onHeatmapClick(evt) {
  * ------------------------------------------------------------------ */
 // Maps t ∈ [-1, +1] → [r,g,b] (0..255).
 // Negative → cyan, zero → near-black, positive → amber/orange.
-function divergingColor(t) {
+// Exported so the board overlay (js/board.js → js/chess-overlay.js,
+// js/othello-board.js) can paint squares with byte-identical colors to the
+// matching heatmap cell.
+export function divergingColor(t) {
   const a = Math.min(1, Math.abs(t));
   // intensity curve: emphasize low magnitudes a touch (sqrt)
   const k = Math.sqrt(a);

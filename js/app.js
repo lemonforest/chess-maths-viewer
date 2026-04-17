@@ -21,7 +21,7 @@ import { createVirtualTable } from './virtual-table.js';
  *  a stale-cached app.js can't downgrade the displayed version after a
  *  fresh HTML load. Keep this, the HTML tag, README, and package.json in
  *  sync on every release. */
-export const APP_VERSION = 'v0.4.2';
+export const APP_VERSION = 'v0.4.3';
 
 /* ------------------------------------------------------------------ *
  * State store

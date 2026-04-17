@@ -1,6 +1,6 @@
 # Chess Spectral Lattice Fermion Viewer
 
-![version](https://img.shields.io/badge/version-v0.4.2-8b5cf6?style=flat-square)
+![version](https://img.shields.io/badge/version-v0.4.3-8b5cf6?style=flat-square)
 ![spectralz](https://img.shields.io/badge/spectralz-v2-475569?style=flat-square)
 
 A drop-in spectral analysis instrument for chess corpora. Drop a `.7z`

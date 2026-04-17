@@ -528,42 +528,59 @@ async function startBackgroundExpansion(corpus) {
   let attempted = 0;
   let ok = 0;
   let quarantined = 0;
-  let transientFail = 0;
   const quarantineSamples = [];
-  const transientSamples = [];
+  // Games that failed transiently on the first pass; retried once at end
+  // so a single worker hiccup doesn't leave a row pending forever.
+  const transientRetry = [];
 
-  for (const g of corpus.manifest.games) {
+  const runOne = async (g, pass) => {
     const gd = corpus.games[g.index];
-    if (!gd) continue;
-    if (gd.opfsReady || gd.opfsFailed) continue;
-    attempted++;
+    if (!gd) return;
+    if (gd.opfsReady || gd.opfsFailed) return;
     try {
       await prefetchGameToOpfs(corpus, g);
       gd.opfsReady = true;
       ok++;
       notify(corpus, 'gameReady', { gameIndex: g.index, ready: true, failed: false });
     } catch (e) {
-      // Only genuine data-corruption signatures quarantine the game.
-      // Transient errors (OPFS write race, worker hiccup, etc.) leave
-      // opfsReady=false without flipping opfsFailed, so the row stays
-      // in the pending state and a future select-game retries through
-      // ensureGameData's extract path.
       if (isDataError(e)) {
         gd.opfsFailed = true;
         quarantined++;
         if (quarantineSamples.length < 5) quarantineSamples.push({ index: g.index, msg: String(e.message ?? e) });
         try { await opfsAppendFailed(dir, g.index); } catch { /* ignore */ }
         notify(corpus, 'gameReady', { gameIndex: g.index, ready: false, failed: true });
+      } else if (pass === 1) {
+        // First-pass transient — queue for retry after the main walk.
+        transientRetry.push({ g, err: e });
       } else {
-        transientFail++;
-        if (transientSamples.length < 5) transientSamples.push({ index: g.index, msg: String(e.message ?? e) });
+        // Second-pass transient — give up; leave pending. ensureGameData
+        // will try again if the user clicks the row.
+        console.warn(`[loader] retry pass still transient-failed game ${g.index}:`, e);
       }
     }
+  };
+
+  // First pass.
+  for (const g of corpus.manifest.games) {
+    attempted++;
+    await runOne(g, 1);
     notify(corpus, 'expandProgress', { processed: attempted, total });
     // Yield so the main thread can repaint, dispatch game clicks, and
     // run any queued microtasks. Without this, the tight extractByPath
     // loop on a 15k-game corpus would starve the UI for minutes.
     await new Promise((r) => setTimeout(r, 0));
+  }
+
+  // Retry pass for transient failures. We explicitly recycle the archive
+  // worker once at the top so any accumulated stale-handle damage from
+  // the first pass is cleared before we re-try.
+  if (transientRetry.length > 0) {
+    console.log(`[loader] retrying ${transientRetry.length} transient failures after worker recycle…`);
+    try { await recycleArchive(corpus); } catch (e) { console.warn('retry-pass recycle:', e); }
+    for (const { g } of transientRetry) {
+      await runOne(g, 2);
+      await new Promise((r) => setTimeout(r, 0));
+    }
   }
 
   // Only mark complete when we actually walked every unfinished game.
@@ -577,19 +594,15 @@ async function startBackgroundExpansion(corpus) {
     corpus._opfsComplete = true;
   }
   notify(corpus, 'opfsComplete');
-  // Structured summary so a devtools paste tells us exactly which games
-  // failed and whether they failed due to bad bytes (quarantined) or a
-  // transient glitch (still pending, click-to-retry).
+  const stillPending = corpus.manifest.games.filter(
+    (g) => !corpus.games[g.index]?.opfsReady && !corpus.games[g.index]?.opfsFailed,
+  ).length;
   console.log(
-    `[loader] expansion done: ${ok} ready · ${quarantined} corrupt · ${transientFail} transient · ${total - attempted} pre-ready`,
+    `[loader] expansion done: ${ok} ready · ${quarantined} corrupt · ${stillPending} still-pending · ${total - attempted} pre-ready`,
   );
   if (quarantined > 0) {
     console.warn('[loader] quarantined games (bad bytes):', quarantineSamples,
       quarantined > quarantineSamples.length ? `…and ${quarantined - quarantineSamples.length} more` : '');
-  }
-  if (transientFail > 0) {
-    console.warn('[loader] transient failures (retry on click):', transientSamples,
-      transientFail > transientSamples.length ? `…and ${transientFail - transientSamples.length} more` : '');
   }
 }
 
@@ -758,6 +771,25 @@ export async function parseGameSpectral(corpus, gameIndex) {
  *  catch (selectGame's try/catch, manifest load, etc.) still surfaces a
  *  real defect rather than looping forever. */
 async function extractByPath(corpus, path, label) {
+  // Serialize all libarchive worker calls for a corpus. Phase-B expansion
+  // and click-driven ensureGameData both route through here; firing two
+  // extract() messages at the single-threaded worker concurrently has been
+  // observed to wedge the worker (every subsequent extract hangs or
+  // throws "invalid archive handle"), which matches the "click game 11,
+  // page locks up" symptom. One extract in flight at a time, FIFO.
+  const prev = corpus._archiveQueue || Promise.resolve();
+  let release;
+  const next = new Promise((r) => { release = r; });
+  corpus._archiveQueue = prev.then(() => next);
+  await prev;
+  try {
+    return await doExtract(corpus, path, label);
+  } finally {
+    release();
+  }
+}
+
+async function doExtract(corpus, path, label) {
   const cf0 = corpus._handle.compressedMap.get(path);
   if (!cf0) throw new Error(`${label} entry missing: ${path}`);
   try {

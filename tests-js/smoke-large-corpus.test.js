@@ -355,6 +355,40 @@ describe('smoke: large corpus game switching', () => {
     expect(corpus._handle).toBeNull();
   });
 
+  it('scenario 6: ensureGameData refuses a pre-quarantined (opfsFailed) game', async () => {
+    const corpus = buildFakeCorpus(20);
+    // Seed the quarantine flag the way phase-B would after a validation
+    // fault during extractFiles — the UI quarantine path must hold even
+    // without a click-time gate.
+    corpus.games[5].opfsFailed = true;
+    await expect(ensureGameData(corpus, 5)).rejects.toThrow(/quarantined/i);
+    expect(corpus.games[5].spectral).toBeNull();
+    expect(corpus.games[5].plies).toBeNull();
+  });
+
+  it('scenario 7: a parse-time failure marks opfsFailed and bans future loads', async () => {
+    const corpus = buildFakeCorpus(5);
+    // Replace game[2]'s spectralz extract with a corrupt blob (garbage
+    // header, not a gzip stream). First call should reject with a parse
+    // error; the ensureGameData error branch classifies it as a data
+    // error and sets opfsFailed. The second call should reject with
+    // the quarantine error (short-circuit before attempting extract).
+    const corrupt = new Uint8Array([0x00, 0x00, 0x00, 0x00]).buffer;
+    corpus._handle.compressedMap.set(corpus.games[2]._spectralPath, {
+      name: 'g2.spectralz.gz',
+      extract: async () => ({
+        arrayBuffer: async () => corrupt,
+        text: async () => { throw new Error('binary'); },
+      }),
+    });
+    await expect(ensureGameData(corpus, 2)).rejects.toThrow();
+    expect(corpus.games[2].opfsFailed).toBe(true);
+    expect(corpus.games[2].spectral).toBeNull();
+    // Second attempt short-circuits: "quarantined" wording comes from
+    // the opfsFailed guard at the top of ensureGameData.
+    await expect(ensureGameData(corpus, 2)).rejects.toThrow(/quarantined/i);
+  });
+
   it('fixture sanity: NDJSON and spectralz round-trip through production parsers', async () => {
     const ndjson = buildNdjson();
     const plies = parseNdjson(ndjson);

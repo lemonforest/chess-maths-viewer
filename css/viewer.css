@@ -511,6 +511,56 @@ button { font-family: inherit; }
   .corpus-switching::before { animation: none; transform: none; }
 }
 
+/* Phase-B "expanding into OPFS" indicator. Shares the base
+   .corpus-switching pattern but distinct slower tempo + cooler palette
+   so the user can see both at once (phase-B + a mid-expansion game
+   switch) without them blurring together. */
+.corpus-expanding {
+  width: 64px;
+  height: 2px;
+}
+.corpus-expanding::before {
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--accent-cool) 50%,
+    transparent 100%
+  );
+  animation-duration: 1800ms;
+}
+
+/* Game-row states (wired by js/app.js renderRow → tr.dataset.state).
+   Phase-B expansion walks rows pending → ready (or failed); the click
+   handler in app.js gates on these flags so only ready rows actually
+   dispatch selectGame(). */
+.game-table tbody tr[data-state="pending"] {
+  opacity: 0.45;
+  cursor: default;
+  animation: game-row-skeleton-pulse 1400ms ease-in-out infinite;
+}
+.game-table tbody tr[data-state="pending"]:hover {
+  background: inherit;   /* kill the normal row hover */
+}
+@keyframes game-row-skeleton-pulse {
+  0%, 100% { opacity: 0.35; }
+  50%      { opacity: 0.60; }
+}
+.game-table tbody tr[data-state="failed"] {
+  color: var(--warn, #c07a46);
+  cursor: not-allowed;
+}
+.game-table tbody tr[data-state="failed"]:hover {
+  background: inherit;
+}
+.game-table tbody tr[data-state="failed"] td:last-child::after {
+  content: ' ⚠';
+  opacity: 0.85;
+  margin-left: 4px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .game-table tbody tr[data-state="pending"] { animation: none; }
+}
+
 /* Inline controls tucked into a panel's title bar (board overlay buttons,
    heatmap channel picker, etc.). Same pattern as `.chart-controls`, just
    scoped so the sibling <h2> and the controls cleanly split the row. */

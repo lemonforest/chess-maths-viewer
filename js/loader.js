@@ -108,13 +108,16 @@ const PREFETCH_GAMES = 10;
  * Public entry point
  *
  * Three paths, chosen at runtime:
- *   1. FAST  — OPFS available + `.complete` marker for this cacheKey:
- *              read manifest from OPFS, skip libarchive entirely.
+ *   1. FAST  — OPFS available + `.complete` marker + game[0] bytes
+ *              present: read manifest from OPFS, skip libarchive
+ *              entirely. If integrity check fails (stale marker from
+ *              a crashed expansion), self-heal by falling through to
+ *              EXPAND, which will repopulate the cache.
  *   2. EXPAND — OPFS available but cache cold/partial: libarchive
  *               prefetch of first N games (phase A, blocking) → reveal
- *               → single-pass extractFiles into OPFS (phase B,
- *               background). Emits 'gameReady' per entry, 'opfsComplete'
- *               when done.
+ *               → per-game sequential extractByPath into OPFS
+ *               (phase B, background). Emits 'gameReady' per game,
+ *               'opfsComplete' when done.
  *   3. LEGACY — OPFS unavailable: original libarchive-per-extract path
  *               from v0.3.4. Still works, still has the stale-handle bug
  *               mitigated by the worker recycle in extractByPath.
@@ -126,24 +129,62 @@ export async function loadCorpusFromFile(file, onProgress = () => {}) {
   emit('decompress', `Opening ${file.name} (${formatBytes(file.size)})…`, 0.02);
 
   if (useOpfs) {
+    let opfsDir = null;
     try {
       const cacheKey = computeCacheKey(file);
-      const opfsDir = await getCorpusDir(cacheKey);
-      if (await opfsIsComplete(opfsDir)) {
-        return await openFromOpfs({ file, opfsDir, emit });
-      }
-      return await openWithExpansion({ file, opfsDir, emit });
+      opfsDir = await getCorpusDir(cacheKey);
     } catch (e) {
-      console.warn('OPFS path failed; falling back to legacy loader:', e);
-      // Fall through to legacy path below.
+      console.warn('OPFS unavailable despite feature detection:', e);
+    }
+    if (opfsDir) {
+      if (await opfsIsComplete(opfsDir)) {
+        try {
+          return await openFromOpfs({ file, opfsDir, emit });
+        } catch (e) {
+          console.warn('OPFS fast path invalid (cache poisoned); rebuilding:', e);
+          // Clear the stale marker so subsequent reloads also rebuild if
+          // expansion fails partway. The expansion path below will write
+          // a fresh .complete once it finishes successfully.
+          try { await invalidateOpfsCache(opfsDir); } catch (e2) { console.warn('cache clear:', e2); }
+        }
+      }
+      try {
+        return await openWithExpansion({ file, opfsDir, emit });
+      } catch (e) {
+        console.warn('OPFS expand path failed; falling back to legacy loader:', e);
+      }
     }
   }
 
   return await openLegacy({ file, emit });
 }
 
+/** Blow away the .complete marker and .failed list so the next open
+ *  retries expansion from scratch. Preserves already-extracted game
+ *  files — prefetchGameToOpfs skips writes when files already exist,
+ *  so this is cheap when partial state is good. */
+async function invalidateOpfsCache(opfsDir) {
+  // OPFS has no direct "remove entry" in the helpers module; overwrite
+  // .complete with empty bytes and the isComplete() check reads the
+  // file's presence so we need to actually delete it. Use the native
+  // removeEntry on the directory handle when available.
+  try {
+    if (typeof opfsDir.removeEntry === 'function') {
+      await opfsDir.removeEntry('.complete').catch(() => {});
+      await opfsDir.removeEntry('.failed').catch(() => {});
+    }
+  } catch (e) {
+    console.warn('invalidateOpfsCache:', e);
+  }
+}
+
 /* ------------------------------------------------------------------ *
  * FAST path — everything on disk, libarchive never spawned.
+ *
+ * Throws if the cache is missing the bytes it claims to have (stale
+ * .complete marker from a crashed expansion, or a manual OPFS purge).
+ * The caller in loadCorpusFromFile catches and falls through to the
+ * expansion path which rebuilds the cache from the archive.
  * ------------------------------------------------------------------ */
 async function openFromOpfs({ file, opfsDir, emit }) {
   emit('manifest', 'Reading cached manifest…', 0.25);
@@ -151,6 +192,19 @@ async function openFromOpfs({ file, opfsDir, emit }) {
   if (!manifestFile) throw new Error('cached manifest missing');
   const manifest = JSON.parse(await manifestFile.text());
   emit('manifest', `Manifest: ${manifest.games.length} games (cached)`, 0.35);
+
+  // Integrity check: verify game[0]'s bytes are actually on disk before
+  // trusting the .complete marker. If not, the cache is poisoned and
+  // we rebuild. Spot-checking game[0] is enough because it's the
+  // eager-parse target; expansion writes all games before marking.
+  const firstIndex = manifest.games[0].index;
+  const firstNdjsonPath   = `games/${firstIndex}.ndjson`;
+  const firstSpectralPath = `games/${firstIndex}.spectralz.gz`;
+  const haveFirstNdjson   = await opfsFileExists(opfsDir, firstNdjsonPath);
+  const haveFirstSpectral = await opfsFileExists(opfsDir, firstSpectralPath);
+  if (!haveFirstNdjson || !haveFirstSpectral) {
+    throw new Error(`cache integrity check failed: game ${firstIndex} bytes missing`);
+  }
 
   augmentManifest(manifest);
   const variant = deriveVariant(manifest);
@@ -173,8 +227,8 @@ async function openFromOpfs({ file, opfsDir, emit }) {
   }
 
   const corpus = makeCorpusShell({ file, manifest, games, variant, opfsDir });
+  corpus._opfsComplete = true;    // cache was fully populated by a prior session
 
-  const firstIndex = manifest.games[0].index;
   emit('spectral', `Decoding game ${firstIndex}…`, 0.7);
   await ensureGameData(corpus, firstIndex);
   emit('spectral', `Ready: game ${firstIndex}`, 0.95);
@@ -233,6 +287,21 @@ async function openWithExpansion({ file, opfsDir, emit }) {
 
   const corpus = makeCorpusShell({ file, manifest, games, variant, opfsDir, handle });
   corpus._file = file;   // needed by legacy recycle path and phase-B reopen
+
+  // Seed row state from the OPFS cache so partial resumes (tab closed
+  // mid-expansion, or a fast-path bailout) don't re-extract files we
+  // already have on disk. .failed contents are also loaded so previously
+  // quarantined games stay quarantined.
+  const preSeededFailed = await opfsReadFailed(opfsDir);
+  for (const g of manifest.games) {
+    if (preSeededFailed.has(g.index)) {
+      games[g.index].opfsFailed = true;
+      continue;
+    }
+    const hasN = await opfsFileExists(opfsDir, `games/${g.index}.ndjson`);
+    const hasS = await opfsFileExists(opfsDir, `games/${g.index}.spectralz.gz`);
+    if (hasN && hasS) games[g.index].opfsReady = true;
+  }
 
   // Phase A: prefetch the first N games into OPFS so the viewer has
   // something clickable immediately. Any failure here is marked per-game
@@ -426,163 +495,71 @@ async function prefetchGameToOpfs(corpus, gameMeta) {
 /* ------------------------------------------------------------------ *
  * Phase B: background expansion of the whole archive into OPFS.
  *
- * Uses libarchive's single-pass extractFiles callback so we never touch
- * the per-entry handle that goes stale after ~25 extract() calls. We
- * open a FRESH archive instance so the prefetch-phase worker (which has
- * already seen N extractByPath calls) can stay unmolested; when phase B
- * finishes it terminates its own worker internally and we null the
- * fresh handle.
+ * Walks each manifest game sequentially through prefetchGameToOpfs,
+ * which reuses extractByPath's worker-recycle protection against the
+ * stale-handle bug. The loop yields to the event loop after every
+ * game so the UI stays responsive — game clicks, chart animations,
+ * and keyboard nav all keep ~60fps during the minutes-long expansion.
+ *
+ * We intentionally do NOT use libarchive's extractFiles(callback): it
+ * materialises the entire decompressed archive in a single worker
+ * message (hundreds of MB for a 191 MB corpus) and fires its per-entry
+ * callbacks via setTimeout *after* the awaited promise resolves, which
+ * would race with .complete marking and leave OPFS empty.
+ *
+ * Only writes `.complete` if we finished every game; a partial
+ * expansion leaves the marker absent so the next open retries.
  * ------------------------------------------------------------------ */
 async function startBackgroundExpansion(corpus) {
-  if (!corpus || !corpus._file || !corpus._opfsDir) {
-    notify(corpus, 'opfsComplete');
-    if (corpus) corpus._opfsComplete = true;
+  if (!corpus || !corpus._opfsDir) {
+    if (corpus) {
+      corpus._opfsComplete = true;
+      notify(corpus, 'opfsComplete');
+    }
     return;
   }
   const dir = corpus._opfsDir;
-  // Build lookup: archive-path → gameIndex + kind. Using the entry's
-  // path we know from the manifest — matching on basename is cheaper
-  // than re-parsing the manifest on every callback.
-  const byPath = new Map();   // archivePath → { gameIndex, kind, opfsPath }
+  const total = corpus.manifest.games.length;
+  let attempted = 0;
+  let ok = 0;
+  let failed = 0;
+
   for (const g of corpus.manifest.games) {
-    const gi = g.index;
-    if (g.ndjson) {
-      byPath.set(basename(g.ndjson),
-        { gameIndex: gi, kind: 'ndjson', opfsPath: `games/${gi}.ndjson` });
-    }
-    if (g.spectralz) {
-      byPath.set(basename(g.spectralz),
-        { gameIndex: gi, kind: 'spectralz', opfsPath: `games/${gi}.spectralz.gz` });
-    }
-  }
-
-  const totalEntries = byPath.size;
-  let processed = 0;
-  // Each game has two files (ndjson + spectralz). Track pair completion
-  // so opfsReady flips only once both halves are on disk.
-  const gameState = new Map();   // gameIndex → { haveNdjson, haveSpectral, failed }
-  const ensureSlot = (gi) => {
-    if (!gameState.has(gi)) gameState.set(gi, { haveNdjson: false, haveSpectral: false, failed: false });
-    return gameState.get(gi);
-  };
-  // Seed from prefetch results so we don't double-write.
-  for (const g of corpus.manifest.games) {
-    const slot = ensureSlot(g.index);
-    if (corpus.games[g.index].opfsReady) {
-      slot.haveNdjson = true;
-      slot.haveSpectral = true;
-    }
-  }
-
-  let archive = null;
-  try {
-    const Archive = await importArchive();
-    archive = await Archive.open(corpus._file);
-    await new Promise((resolve, reject) => {
-      archive.extractFiles((entry) => {
-        try {
-          handleExtractedEntry(entry, { byPath, gameState, corpus });
-          processed++;
-          notify(corpus, 'expandProgress', { processed, total: totalEntries });
-        } catch (e) {
-          console.warn('extractFiles callback:', e);
-        }
-      }).then(resolve, reject);
-    });
-  } catch (e) {
-    console.warn('background extractFiles failed; marking unseen games as failed:', e);
-    // Flag any games that didn't land as failed so the UI can quarantine
-    // them instead of hanging on pending forever.
-    for (const g of corpus.manifest.games) {
-      const slot = gameState.get(g.index);
-      const gd = corpus.games[g.index];
-      if (gd && !gd.opfsReady && !gd.opfsFailed) {
-        gd.opfsFailed = true;
-        if (slot) slot.failed = true;
-        try { await opfsAppendFailed(dir, g.index); } catch { /* ignore */ }
-        notify(corpus, 'gameReady', { gameIndex: g.index, ready: false, failed: true });
-      }
-    }
-  }
-
-  // Promote any games whose pair is complete but weren't flipped during
-  // the stream (e.g. entries arrived in interleaved order; we flip eagerly
-  // inside handleExtractedEntry so this is usually a no-op).
-  for (const [gi, slot] of gameState) {
-    const gd = corpus.games[gi];
-    if (!gd || gd.opfsReady || gd.opfsFailed) continue;
-    if (slot.haveNdjson && slot.haveSpectral) {
-      gd.opfsReady = true;
-      notify(corpus, 'gameReady', { gameIndex: gi, ready: true, failed: false });
-    }
-  }
-
-  try { await opfsMarkComplete(dir); } catch (e) { console.warn('markComplete:', e); }
-  corpus._opfsComplete = true;
-  notify(corpus, 'opfsComplete');
-}
-
-function handleExtractedEntry(entry, { byPath, gameState, corpus }) {
-  if (!entry || !entry.file) return;
-  // libarchive.js fires {file, path} where file.name is the basename.
-  const name = entry.file.name || '';
-  const slot = byPath.get(name);
-  if (!slot) return;  // not a game file (could be manifest, README, etc.)
-  const { gameIndex, kind, opfsPath } = slot;
-  const gd = corpus.games[gameIndex];
-  if (!gd) return;
-  const state = gameState.get(gameIndex) ?? { haveNdjson: false, haveSpectral: false, failed: false };
-  gameState.set(gameIndex, state);
-
-  // If this game already failed earlier (prefetch error, validation fault),
-  // don't try to rehydrate it — the row stays quarantined.
-  if (gd.opfsFailed || state.failed) return;
-
-  (async () => {
+    const gd = corpus.games[g.index];
+    if (!gd) continue;
+    if (gd.opfsReady || gd.opfsFailed) continue;
+    attempted++;
     try {
-      const bytes = await entry.file.arrayBuffer();
-      // Quick shape-validation before we commit bytes to disk, so a
-      // corrupt game doesn't slip past the guard and blow up later in
-      // parseNdjson / parseSpectralz under the ensureGameData reader.
-      if (kind === 'spectralz') {
-        validateSpectralzGzip(bytes);
-      } else if (kind === 'ndjson') {
-        // Non-strict — NDJSON parse is resilient (skips malformed lines),
-        // but an empty or binary payload is a red flag.
-        if (bytes.byteLength === 0) throw new Error('empty ndjson');
-      }
-      await opfsWrite(corpus._opfsDir, opfsPath, new Uint8Array(bytes));
-      if (kind === 'ndjson')    state.haveNdjson  = true;
-      if (kind === 'spectralz') state.haveSpectral = true;
-      if (state.haveNdjson && state.haveSpectral && !gd.opfsReady) {
-        gd.opfsReady = true;
-        notify(corpus, 'gameReady', { gameIndex, ready: true, failed: false });
-      }
+      await prefetchGameToOpfs(corpus, g);
+      gd.opfsReady = true;
+      ok++;
+      notify(corpus, 'gameReady', { gameIndex: g.index, ready: true, failed: false });
     } catch (e) {
-      console.warn(`game ${gameIndex} (${kind}) failed during expansion:`, e);
-      state.failed = true;
+      console.warn(`background expansion failed for game ${g.index}:`, e);
       gd.opfsFailed = true;
-      gd.opfsReady = false;
-      try { await opfsAppendFailed(corpus._opfsDir, gameIndex); } catch { /* ignore */ }
-      notify(corpus, 'gameReady', { gameIndex, ready: false, failed: true });
+      failed++;
+      try { await opfsAppendFailed(dir, g.index); } catch { /* ignore */ }
+      notify(corpus, 'gameReady', { gameIndex: g.index, ready: false, failed: true });
     }
-  })();
-}
+    notify(corpus, 'expandProgress', { processed: attempted, total });
+    // Yield so the main thread can repaint, dispatch game clicks, and
+    // run any queued microtasks. Without this, the tight extractByPath
+    // loop on a 15k-game corpus would starve the UI for minutes.
+    await new Promise((r) => setTimeout(r, 0));
+  }
 
-/** Cheap sanity check on a gzipped spectralz blob. Catches obvious
- *  corruption (truncated / wrong magic) without running the full gunzip
- *  + parse pipeline on every entry. Real parse errors still surface
- *  when ensureGameData eventually reads the bytes. */
-function validateSpectralzGzip(buf) {
-  if (!buf || buf.byteLength < 10) throw new Error('spectralz too small');
-  const head = new Uint8Array(buf, 0, 2);
-  if (head[0] !== 0x1f || head[1] !== 0x8b) throw new Error('not a gzip stream');
-}
-
-function basename(p) {
-  const s = String(p || '');
-  const i = Math.max(s.lastIndexOf('/'), s.lastIndexOf('\\'));
-  return i >= 0 ? s.slice(i + 1) : s;
+  // Only mark complete when we actually walked every unfinished game.
+  // If we bailed out (e.g. handle nuked repeatedly), leave the marker
+  // absent so the next open continues where we left off.
+  const everyGameSettled = corpus.manifest.games.every(
+    (g) => corpus.games[g.index]?.opfsReady || corpus.games[g.index]?.opfsFailed,
+  );
+  if (everyGameSettled) {
+    try { await opfsMarkComplete(dir); } catch (e) { console.warn('markComplete:', e); }
+    corpus._opfsComplete = true;
+  }
+  notify(corpus, 'opfsComplete');
+  console.log(`[loader] expansion done: ${ok} ready, ${failed} failed, ${total - attempted} skipped (pre-ready)`);
 }
 
 /** Tear down a corpus: close the libarchive worker and drop parsed state.
@@ -646,6 +623,11 @@ export async function ensureGameData(corpus, gameIndex) {
           try { await opfsWrite(dir, ndjsonOpfsPath, new TextEncoder().encode(text)); }
           catch (e) { console.warn('OPFS ndjson cache-write failed:', e); }
         }
+      } else {
+        // Fast path + no OPFS file + no archive fallback = genuinely
+        // unavailable. Throw so the UI quarantines this row instead of
+        // silently handing an empty game to board.js / heatmap.js.
+        throw new Error(`game ${gameIndex} ndjson missing (no archive fallback)`);
       }
       if (text != null) game.plies = parseNdjson(text);
     }
@@ -662,6 +644,8 @@ export async function ensureGameData(corpus, gameIndex) {
           try { await opfsWrite(dir, spectralOpfsPath, new Uint8Array(buf)); }
           catch (e) { console.warn('OPFS spectralz cache-write failed:', e); }
         }
+      } else {
+        throw new Error(`game ${gameIndex} spectralz missing (no archive fallback)`);
       }
       if (buf) {
         const decompressed = await gunzip(buf);

@@ -563,6 +563,18 @@ button { font-family: inherit; }
   gap: 4px;
 }
 
+/* Left-side group in the CORPUS panel header: title + nav + loading
+   indicator all huddle next to the <h2>. The game-count meta span
+   lives as a sibling outside this cluster and floats right via the
+   panel-header's space-between. */
+.corpus-title-cluster {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
 /* ------------------------------------------------------------------------- *
  * Board panel
  * ------------------------------------------------------------------------- */

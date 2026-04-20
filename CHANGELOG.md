@@ -48,6 +48,16 @@ The `.spectralz` format version is tracked separately in
   the game guard protects only the ply/play/speed actions that
   genuinely need spectral data. Covered by
   `tests-js/fiber-overlay.test.js`.
+- Picking **R** in the fiber piece selector booped the whole
+  chessboard down by one row. The `.fiber-helper` span was inline
+  in the `.fiber-controls` flex row with `flex: 1; min-width:
+  180px;`, so its 185-char message couldn't fit beside the three
+  seg-controls and the row wrapped. The helper is now absolutely
+  positioned — it floats as a tooltip-style note over the top
+  edge of the board, never contributes to row height, and
+  disappears when a non-rook piece is picked. The R button's
+  `title` attribute also carries the same message for a native
+  hover tooltip.
 
 ## v0.6.0 — 2026-04-20
 

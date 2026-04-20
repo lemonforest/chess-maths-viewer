@@ -624,6 +624,8 @@ button { font-family: inherit; }
   padding: 6px 14px 10px;
   background: var(--bg-1);
   border-top: 1px solid var(--line);
+  /* Anchor for the absolutely-positioned .fiber-helper tooltip below. */
+  position: relative;
 }
 /* When the fiber overlay toggle is off we want the sub-row to DISAPPEAR
    visually but still reserve its vertical space — otherwise toggling
@@ -639,11 +641,30 @@ button { font-family: inherit; }
   pointer-events: none;
 }
 .fiber-controls .seg-control { align-self: center; }
+/* Rook-helper note: floats as a tooltip overlay anchored to the bottom-
+   left of the fiber-controls row rather than sitting inline. Inline
+   placement with `flex: 1; min-width: 180px` made the row wrap (its
+   185-char message doesn't fit beside the three seg-controls), which
+   grew the row's height and booped the whole chessboard down by ~24px
+   every time the user picked R. Absolute positioning keeps the row at
+   its normal one-line height and lets the note hover over the top
+   edge of the board without affecting layout. */
 .fiber-helper {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  top: 100%;
+  z-index: 20;
+  margin-top: -2px;
+  padding: 4px 8px;
   font-size: 10.5px;
+  line-height: 1.35;
   color: var(--fg-2);
-  flex: 1;
-  min-width: 180px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  pointer-events: none;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
 }
 
 /* chessboard.js dark theme tweaks */

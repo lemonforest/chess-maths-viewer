@@ -435,17 +435,26 @@ function syncFiberOverlay() {
   f.setCompanionChannelActive(state.boardOverlay && state.fiberMode === 'gradient');
   f.setEnabled(state.fiberOverlay && !!fiberData);
 
-  // Helper text near the piece selector: tell the user *why* the rook
-  // is flat rather than letting them wonder if it's broken.
+  // Helper text: tell the user *why* the rook is flat rather than
+  // letting them wonder if it's broken. Rendered as an absolutely-
+  // positioned floating note (see .fiber-helper in viewer.css) so it
+  // can't push the board down when rook is selected. We also mirror
+  // the text into the R button's `title` for a native browser
+  // tooltip on hover — redundant but nice for discoverability.
   const helper = document.getElementById('fiber-helper');
+  const rBtn = document.querySelector('[data-fiber-piece="R"]');
+  const rookActive = state.fiberOverlay && state.fiberPiece === 'R';
   if (helper) {
-    if (state.fiberOverlay && state.fiberPiece === 'R') {
+    if (rookActive) {
       helper.textContent = ROOK_HELPER;
       helper.hidden = false;
     } else {
       helper.hidden = true;
       helper.textContent = '';
     }
+  }
+  if (rBtn) {
+    rBtn.title = rookActive ? `Rook — ${ROOK_HELPER}` : 'Rook';
   }
 }
 

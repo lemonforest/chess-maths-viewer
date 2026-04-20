@@ -12,14 +12,14 @@ channel energy traces, and an engine eval overlay.
 The site **is** the instrument. The `.7z` **is** the specimen. There is no
 server, no build step, no pre-generated data directory.
 
-**The bytes this viewer renders are produced by the [chess spectral
-encoder](https://github.com/lemonforest/mlehaptics/tree/main/docs/chess-maths)**
-(Python reference + byte-identical C17 port), part of the broader
-`mlehaptics` research programme that treats chess as a classical lattice
-fermion system — pieces as quantum-numbered particles on a grid-graph
-Laplacian, captures as field-energy redistribution on a shared rank-5 fiber
-bundle. See [Producing corpora](#producing-corpora) for the encoder CLI and
-[Background](#background) for the theoretical framing.
+**The bytes this viewer renders are produced by the [`chess-spectral`
+encoder](https://pypi.org/project/chess-spectral/)** (`pip install
+chess-spectral` — Python reference + byte-identical C17 port), part of the
+broader `mlehaptics` research programme that treats chess as a classical
+lattice fermion system — pieces as quantum-numbered particles on a
+grid-graph Laplacian, captures as field-energy redistribution on a shared
+rank-5 fiber bundle. See [Producing corpora](#producing-corpora) for the
+encoder CLI and [Background](#background) for the theoretical framing.
 
 ## Usage
 
@@ -114,42 +114,51 @@ Chaos ratio χ (per game) = ⟨F_T⟩ / ⟨A₁⟩.
 
 This repo is a **consumer** of `.7z` corpus archives — it does not produce
 them. The encoder that makes the `.spectralz` files inside those archives
-lives in the sibling `mlehaptics` repo:
+is published on PyPI:
 
-**→ [lemonforest/mlehaptics — `docs/chess-maths/chess-spectral/`](https://github.com/lemonforest/mlehaptics/tree/main/docs/chess-maths/chess-spectral)**
+**→ [`chess-spectral` on PyPI](https://pypi.org/project/chess-spectral/)**
 
-Two implementations ship there, kept byte-identical by a parity test suite
-([`python/tests/test_parity.py`](https://github.com/lemonforest/mlehaptics/blob/main/docs/chess-maths/chess-spectral/python/tests/test_parity.py)):
+```bash
+pip install "chess-spectral[corpus]"
+```
 
-- **Python reference** — [`chess-spectral/python/`](https://github.com/lemonforest/mlehaptics/tree/main/docs/chess-maths/chess-spectral/python)
-  — `encode_640(pos) → ndarray(640,)`, gzip-transparent `read_encodings()`,
-  CLI via `spectral_py.py`. Use this for REPL / notebook analysis and when
-  developing new channels.
-- **C17 port** — [`chess-spectral/src/`](https://github.com/lemonforest/mlehaptics/tree/main/docs/chess-maths/chess-spectral/src) + [`chess-spectral/include/`](https://github.com/lemonforest/mlehaptics/tree/main/docs/chess-maths/chess-spectral/include)
-  — built via `CMakeLists.txt` into a `spectral` binary for µs/encode batch
-  throughput. `spectral csv` output is bit-for-bit identical to the Python
-  CSV exporter on the same input.
+The `[corpus]` extra pulls in `python-chess` for PGN ingest via the
+`chess_spectral.corpus` module. Source, C17 port, and a parity test suite
+that keeps the two implementations byte-identical live in the sibling
+[`mlehaptics` repo](https://github.com/lemonforest/mlehaptics/tree/main/docs/chess-maths/chess-spectral)
+— install from there instead if you want the C binary (µs/encode batch
+throughput) or to develop new channels.
 
 ### CLI
 
-`python spectral_py.py <command> [--help]` (or the `spectral` C binary,
-same subcommands):
+After install, `chess-spectral` is on your `$PATH`:
 
 | Command | Purpose |
 |---|---|
-| `encode-fen --fen "<fen>" [-o out.spectral]` | Encode a single position to a 1-frame file. |
-| `encode -i game.ndjson -o game.spectralz -z` | Encode an NDJSON game (from `pgn_bridge.py`) to a gzip-compressed `.spectralz`. |
-| `csv game.spectralz [-o game.csv]` | Emit the 17-column chat-friendly CSV (inter-frame metrics + channel energies). Auto-picks up a sibling `.ndjson` for eval/clk/NAG columns. |
-| `corpus --pgn FILE [FILE ...] [--run-id NAME] [--encoder {py,c}]` | Wrap one or more local PGNs into a viewer-ready folder (`manifest.json` + `corpus_index.csv` + `pgn/` + `ndjson/` + `spectralz/`). Then archive: `7z a run.7z <run-dir>` and drop into the viewer. |
-| `version` | Print file-format / encoding-dim info. |
+| `chess-spectral encode-fen --fen "<fen>" -o out.spectral` | Encode a single position to a 1-frame file. |
+| `chess-spectral encode -i game.ndjson -o game.spectralz -z` | Encode an NDJSON game to a gzip-compressed `.spectralz`. |
+| `chess-spectral csv game.spectralz [-o game.csv]` | Emit the 17-column chat-friendly CSV (inter-frame metrics + channel energies). Auto-picks up a sibling `.ndjson` for eval/clk/NAG columns. |
+| `chess-spectral version` | Print file-format / encoding-dim info. |
 
 Run any subcommand with `--help` for the full flag set — names and defaults
 in the CLI are the source of truth.
 
+### Packaging a viewer-ready `.7z`
+
+The encoder emits a **folder** (`manifest.json` + `corpus_index.csv` +
+`pgn/` + `ndjson/` + `spectralz/`); the viewer expects a `.7z` archive, so
+you have to compress it yourself as a final step:
+
+```bash
+7z a my_corpus.7z my_corpus/
+# → drop my_corpus.7z onto the viewer
+```
+
 ### End-to-end from Lichess
 
 [`run_corpus_sweep.py`](https://github.com/lemonforest/mlehaptics/blob/main/docs/chess-maths/run_corpus_sweep.py)
-wires fetch → encode → feature-extract into one step:
+in the `mlehaptics` repo wires fetch → encode → feature-extract into one
+step:
 
 ```bash
 python docs/chess-maths/run_corpus_sweep.py \
@@ -159,7 +168,7 @@ python docs/chess-maths/run_corpus_sweep.py \
 
 7z a sweep_lichess_drnykterstein_$(date +%Y-%m-%d)_N10.7z \
     results/sweep_lichess_drnykterstein_$(date +%Y-%m-%d)_N10/
-# ↑ manual step today; a packager is coming.
+# ↑ manual archive step — the encoder never writes .7z itself.
 ```
 
 See [`ENCODERS.md`](https://github.com/lemonforest/mlehaptics/blob/main/docs/chess-maths/ENCODERS.md)
@@ -193,7 +202,10 @@ chess-maths-viewer/
 ├── js/
 │   ├── app.js            State store, pub/sub, keyboard, URL hash, table, chain
 │   ├── loader.js         .7z extraction, .spectralz parser, NDJSON, manifest
-│   ├── board.js          chessboard.js + chess.js, FEN sync, playback
+│   ├── opfs.js           Origin Private File System cache for per-game entries
+│   ├── board.js          chessboard.js driver, FEN sync, playback
+│   ├── chess-overlay.js  Paints per-square channel tint into chessboard.js squares
+│   ├── othello-board.js  SVG driver for Othello corpora (swap-in for board.js)
 │   ├── spectral.js       Channel registry, canvas heatmap renderer
 │   ├── charts.js         D3 line chart, eval overlay, crosshair tooltip
 │   ├── lru.js            LRU eviction for parsed game state
@@ -228,6 +240,13 @@ Two test suites run in CI (see `.github/workflows/ci.yml`):
     - `virtual-table.test.js` — jsdom-backed check that the virtual
       scroller renders fewer rows than the full dataset and keeps
       `.active` exclusive to the matching key.
+    - `opfs.test.js` — Map-backed OPFS polyfill exercises
+      `isOpfsAvailable`, cache-key derivation, and read/write round-trip
+      of `js/opfs.js`.
+    - `smoke-large-corpus.test.js` — reproduces the last-click-loses
+      race on a synthetic 191 MB-shaped corpus by calling the real
+      `ensureGameData` / LRU / virtual-table paths with a hand-verified
+      10-ply fixture (libarchive.js + WASM don't run under jsdom).
 
 Install the dev dependencies with `npm install`; they stay under
 `node_modules/` and are not loaded by the viewer at runtime.

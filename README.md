@@ -136,8 +136,9 @@ After install, `chess-spectral` is on your `$PATH`:
 | Command | Purpose |
 |---|---|
 | `chess-spectral encode-fen --fen "<fen>" -o out.spectral` | Encode a single position to a 1-frame file. |
-| `chess-spectral encode -i game.ndjson -o game.spectralz -z` | Encode an NDJSON game to a gzip-compressed `.spectralz`. |
+| `chess-spectral encode {-i game.ndjson \| --pgn game.pgn \| -u <lichess/chess.com URL>} -o game.spectralz -z` | Encode a game to a gzip-compressed `.spectralz`. Accepts pre-produced NDJSON, a local PGN, or a URL that returns PGN text. |
 | `chess-spectral csv game.spectralz [-o game.csv]` | Emit the 17-column chat-friendly CSV (inter-frame metrics + channel energies). Auto-picks up a sibling `.ndjson` for eval/clk/NAG columns. |
+| `chess-spectral corpus --pgn FILE [FILE ...] [--run-id NAME] [--encoder {py,c}]` | Wrap one or more local PGNs into a viewer-ready folder (`manifest.json` + `corpus_index.csv` + `corpus_summary.md` + `pgn/` + `ndjson/` + `spectralz/`). `--encoder c` uses the C binary at `$CS_SPECTRAL_BIN` for ~38× throughput, byte-identical output. |
 | `chess-spectral version` | Print file-format / encoding-dim info. |
 
 Run any subcommand with `--help` for the full flag set — names and defaults
@@ -145,11 +146,13 @@ in the CLI are the source of truth.
 
 ### Packaging a viewer-ready `.7z`
 
-The encoder emits a **folder** (`manifest.json` + `corpus_index.csv` +
-`pgn/` + `ndjson/` + `spectralz/`); the viewer expects a `.7z` archive, so
-you have to compress it yourself as a final step:
+`chess-spectral corpus` emits a **folder** (`manifest.json` +
+`corpus_index.csv` + `corpus_summary.md` + `pgn/` + `ndjson/` +
+`spectralz/`); the viewer expects a `.7z` archive, so you have to compress
+it yourself as a final step:
 
 ```bash
+chess-spectral corpus --pgn my_games.pgn --run-id my_corpus --results-root .
 7z a my_corpus.7z my_corpus/
 # → drop my_corpus.7z onto the viewer
 ```

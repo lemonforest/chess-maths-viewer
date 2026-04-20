@@ -24,7 +24,7 @@ import { getOverlayForPly, OVERLAY_TRANSFORM_IDS } from './spectral.js';
 
 const FIBER_PIECE_IDS = ['N', 'B', 'R', 'Q', 'K'];
 const FIBER_MODE_IDS  = ['gradient', 'discrete'];
-const FIBER_CMAP_IDS  = ['viridis', 'diverging'];
+const FIBER_CMAP_IDS  = ['viridis', 'diverging', 'mono'];
 const ROOK_HELPER = 'Rook fiber is identically zero — its rule content ' +
                     'lives in the diagonal channel, not the off-diagonal ' +
                     'fiber. See notebook §7b.';
@@ -96,7 +96,17 @@ export function initBoard(rootIds = {
       }
       const mBtn = evt.target.closest('button[data-fiber-mode]');
       if (mBtn && FIBER_MODE_IDS.includes(mBtn.dataset.fiberMode)) {
-        setState({ fiberMode: mBtn.dataset.fiberMode });
+        const next = mBtn.dataset.fiberMode;
+        const patch = { fiberMode: next };
+        // Discrete fiber + channel overlay fight for the same
+        // background-image property. Switching INTO discrete while
+        // channel is on → turn channel off so each overlay has a
+        // well-defined layer. (The symmetric "channel turning on while
+        // fiber is discrete" case is handled in handleAction.)
+        if (next === 'discrete' && state.boardOverlay) {
+          patch.boardOverlay = false;
+        }
+        setState(patch);
         return;
       }
       const cBtn = evt.target.closest('button[data-fiber-cmap]');
@@ -142,6 +152,9 @@ export function initBoard(rootIds = {
   subscribe('heatmapView', syncOverlay);
   subscribe('boardOverlay', () => {
     syncOverlay();
+    // Re-sync the fiber overlay too — its gradient alpha depends on
+    // whether the channel overlay is also active (companion dim).
+    syncFiberOverlay();
     const btn = document.querySelector('button[data-action="overlay"]');
     if (btn) {
       btn.setAttribute('aria-pressed', state.boardOverlay ? 'true' : 'false');
@@ -289,21 +302,34 @@ function handleAction(action) {
   // ply data — so gating it on game presence was silently swallowing
   // every click until a game finished loading.
   switch (action) {
-    case 'overlay':
-      // Mutually exclusive with the fiber overlay — both paint the same
-      // board squares, and running them simultaneously would stack two
-      // tints with no coherent interpretation.
-      setState({
-        boardOverlay: !state.boardOverlay,
-        fiberOverlay: state.boardOverlay ? state.fiberOverlay : false,
-      });
+    case 'overlay': {
+      // Channel overlay and fiber overlay CAN coexist as long as the
+      // fiber is in 'gradient' mode — fiber uses a separate canvas
+      // layer, channel paints per-square background-image, they don't
+      // fight at the DOM level. The only genuine conflict is fiber's
+      // 'discrete' mode, which paints the same background-image
+      // property as channel; if the user flips channel on while fiber
+      // is discrete, auto-switch fiber to gradient so both survive.
+      const turningOn = !state.boardOverlay;
+      const patch = { boardOverlay: turningOn };
+      if (turningOn && state.fiberOverlay && state.fiberMode === 'discrete') {
+        patch.fiberMode = 'gradient';
+      }
+      setState(patch);
       return;
-    case 'fiber':
-      setState({
-        fiberOverlay: !state.fiberOverlay,
-        boardOverlay: state.fiberOverlay ? state.boardOverlay : false,
-      });
+    }
+    case 'fiber': {
+      // Symmetric rule: if the user is turning fiber on and channel is
+      // already on, keep channel and force gradient mode so they
+      // compose cleanly.
+      const turningOn = !state.fiberOverlay;
+      const patch = { fiberOverlay: turningOn };
+      if (turningOn && state.boardOverlay && state.fiberMode === 'discrete') {
+        patch.fiberMode = 'gradient';
+      }
+      setState(patch);
       return;
+    }
     case 'plain':
       setState({ plainBoard: !state.plainBoard });
       return;
@@ -404,6 +430,9 @@ function syncFiberOverlay() {
   f.setMode(state.fiberMode);
   f.setColormap(state.fiberCmap);
   f.setFlipped(board.flipped);
+  // Companion flag: only meaningful while the fiber overlay is
+  // actually in gradient mode (discrete is mutex with channel).
+  f.setCompanionChannelActive(state.boardOverlay && state.fiberMode === 'gradient');
   f.setEnabled(state.fiberOverlay && !!fiberData);
 
   // Helper text near the piece selector: tell the user *why* the rook

@@ -47,6 +47,18 @@ const DIVERGENT = [
   [220, 120,  80],
   [158,  36,  36],  // deep red
 ];
+// Monochrome "elevation" ramp — dark-to-light greyscale. Designed to
+// stay out of the channel overlay's cyan/amber hue zone so fiber can
+// read as a brightness field while channel signals punch through as
+// coloured per-square spikes. Slight blue bias in the highlights so
+// the ramp doesn't drift towards the amber end of channel's palette.
+const MONO = [
+  [ 20,  20,  24],
+  [ 78,  78,  86],
+  [138, 138, 146],
+  [196, 196, 206],
+  [244, 246, 252],
+];
 
 function _cmap(stops, t) {
   t = Math.max(0, Math.min(1, t));
@@ -71,9 +83,14 @@ export function attachFiberOverlay(hostId) {
     data: null,        // parsed fiber_norms.json
     piece: 'N',        // 'N'|'B'|'R'|'Q'|'K'
     mode: 'gradient',  // 'discrete' | 'gradient'
-    cmap: 'viridis',   // 'viridis' | 'diverging'
+    cmap: 'viridis',   // 'viridis' | 'diverging' | 'mono'
     enabled: false,
     flipped: false,
+    // When the channel overlay is also active, we dim the gradient
+    // canvas so the per-square channel tints stay readable through
+    // it — fiber turns into "ambient elevation" and channel keeps its
+    // localised-spike reading.
+    companionChannelActive: false,
   };
 
   let canvas = null;      // <canvas> used by 'gradient' mode
@@ -152,7 +169,23 @@ export function attachFiberOverlay(hostId) {
 
   function _colorFor(v, vMin, vMax, mean) {
     const t = _tForCmap(v, vMin, vMax, mean);
-    return _cmap(state.cmap === 'diverging' ? DIVERGENT : VIRIDIS, t);
+    let stops;
+    if (state.cmap === 'diverging')   stops = DIVERGENT;
+    else if (state.cmap === 'mono')   stops = MONO;
+    else                              stops = VIRIDIS;
+    return _cmap(stops, t);
+  }
+
+  function _gradientAlpha(isFlat) {
+    if (isFlat) return 0.35;
+    // Dim when channel overlay is also active so its per-square tints
+    // stay readable through the fiber canvas. Mono gets a slightly
+    // higher companion alpha since its achromatic shading competes
+    // less with the channel's cyan/amber hues.
+    if (state.companionChannelActive) {
+      return state.cmap === 'mono' ? 0.5 : 0.42;
+    }
+    return 0.72;
   }
 
   function _paintDiscrete() {
@@ -169,6 +202,9 @@ export function attachFiberOverlay(hostId) {
       const [r, g, b] = isFlat
         ? [80, 80, 100]   // uniform neutral for the zero rook field
         : _colorFor(field[i], vMin, vMax, mean);
+      // Discrete mode is mutex with channel in board.js, so the
+      // companion dim doesn't apply here — always use the full
+      // single-overlay alpha.
       const alpha = isFlat ? 0.35 : 0.7;
       el.style.backgroundImage =
         `linear-gradient(rgba(${r},${g},${b},${alpha}),rgba(${r},${g},${b},${alpha}))`;
@@ -239,7 +275,7 @@ export function attachFiberOverlay(hostId) {
       img.data[o]     = R;
       img.data[o + 1] = G;
       img.data[o + 2] = B;
-      img.data[o + 3] = Math.round(255 * (isFlat ? 0.35 : 0.72));
+      img.data[o + 3] = Math.round(255 * _gradientAlpha(isFlat));
     }
     sctx.putImageData(img, 0, 0);
 
@@ -288,12 +324,20 @@ export function attachFiberOverlay(hostId) {
       _render();
     },
     setColormap(c) {
-      if (c !== 'viridis' && c !== 'diverging') return;
+      if (c !== 'viridis' && c !== 'diverging' && c !== 'mono') return;
       state.cmap = c;
       _render();
     },
     setEnabled(on) { state.enabled = !!on; _render(); },
     setFlipped(f) { state.flipped = !!f; if (state.enabled) _render(); },
+    /** Lets board.js tell us when the channel overlay is ALSO active,
+     *  so the gradient canvas can dim itself to let the per-square
+     *  channel tints show through. No-op in discrete mode (mutex
+     *  enforced at the handleAction layer in board.js). */
+    setCompanionChannelActive(on) {
+      state.companionChannelActive = !!on;
+      if (state.enabled && state.mode === 'gradient') _render();
+    },
     relayout() { if (state.enabled && state.mode === 'gradient') _paintGradient(); },
     getState() { return { ...state }; },
     destroy() {

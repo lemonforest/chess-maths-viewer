@@ -1,6 +1,6 @@
 # Chess Spectral Lattice Fermion Viewer
 
-![version](https://img.shields.io/badge/version-v0.6.0-8b5cf6?style=flat-square)
+![version](https://img.shields.io/badge/version-v0.7.0-8b5cf6?style=flat-square)
 ![spectralz](https://img.shields.io/badge/spectralz-v2-475569?style=flat-square)
 
 A drop-in spectral analysis instrument for chess corpora. Drop a `.7z`
@@ -146,7 +146,32 @@ The sub-controls that appear when the overlay is on:
 |---|---|---|
 | piece    | N B R Q K            | which piece type to paint |
 | render   | smooth / tiles       | bilinear-upsampled canvas gradient vs. discrete per-square tiles |
-| colormap | viridis / div        | perceptually uniform vs. divergent-around-mean |
+| colormap | viridis / div / mono | perceptually uniform / divergent-around-mean / greyscale elevation |
+
+### Combining with the channel overlay
+
+The fiber overlay (`∥F∥`) and the channel overlay (`⊞`) can be on
+at the same time. They occupy different layers — fiber paints onto
+a dedicated `<canvas>` that sits above the board squares but below
+the piece sprites; channel paints each square's `background-image`
+directly — so they compose into a two-channel visualization:
+
+- **fiber = ambient elevation** (static, tells you "where does this
+  piece's rule content live on an 8×8 board?")
+- **channel = localised signal spikes** (dynamic, tells you "what
+  is this piece's spectral channel doing right now?")
+
+When both are on the fiber canvas auto-dims from alpha 0.72 to 0.42
+so the channel tints stay readable through it. Pick the `mono`
+colormap for the cleanest compose — its greyscale ramp stays out
+of the channel palette's cyan/amber hue zone, so the fiber reads
+as pure brightness and the channel keeps all the chroma to itself.
+
+The fiber's `tiles` mode does genuinely conflict with the channel
+overlay (both paint the same `background-image` property), so
+turning channel on while fiber is in `tiles` auto-promotes fiber to
+`smooth`, and picking `tiles` while channel is on auto-disables
+channel.
 
 Range normalization is **per piece**, so each piece's [min, max]
 maps to the full color scale independently — this preserves visual

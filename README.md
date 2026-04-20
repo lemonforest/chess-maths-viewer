@@ -63,6 +63,65 @@ The viewer state is encoded in the URL fragment so positions are shareable:
 Loading a URL with a fragment but no corpus shows the drop zone with a hint;
 after dropping the matching corpus the viewer jumps to the requested state.
 
+## Fiber-norm overlay
+
+Toggle the **∥F∥** button in the board panel header to paint the
+per-square rank-3 fiber norm for a chosen piece type as a gradient
+over the board. The field is a static property of the chess rules,
+derived from the shared fiber bundle in the research notebook §7. It
+does **not** change as you step through plies — this overlay is
+complementary to the existing per-channel overlay (⊞), not a
+replacement.
+
+- **Knight (N):** center-bright, corners-dim. Matches the §7
+  qualitative 2:1 corner/center structure.
+- **Bishop (B):** diagonal-axis symmetric.
+- **Rook (R):** identically zero (rook rule content is in the
+  diagonal channel, not the off-diagonal fiber; see §7b). The
+  overlay paints a uniform neutral tint and displays a short helper
+  line — this is expected, not a bug.
+- **Queen (Q):** proportional to bishop (queen = bishop + rook, and
+  rook's off-diagonal contribution is zero; the bishop-queen cosine
+  is 1.000 by construction).
+- **King (K):** localized pattern reflecting the king's
+  8-neighbourhood rule.
+
+The sub-controls that appear when the overlay is on:
+
+| Control | Options | Effect |
+|---|---|---|
+| piece    | N B R Q K            | which piece type to paint |
+| render   | smooth / tiles       | bilinear-upsampled canvas gradient vs. discrete per-square tiles |
+| colormap | viridis / div        | perceptually uniform vs. divergent-around-mean |
+
+Range normalization is **per piece**, so each piece's [min, max]
+maps to the full color scale independently — this preserves visual
+detail across pieces with different absolute magnitudes. The URL
+hash carries `fiber=<piece>,<mode>,<cmap>` when the overlay is on,
+so you can share a specific view.
+
+### Regenerating the fiber data
+
+The per-square values live in `data/fiber_norms.json` and are
+produced offline by a single script:
+
+```bash
+pip install -e '.[fiber]'              # numpy
+python3 scripts/generate_fiber_norms.py
+```
+
+The script builds the 8×8 grid Laplacian in the tensor-product
+eigenbasis, derives the rank-3 shared-fiber basis orthogonal to
+rook's per-square fluctuations, and writes the 5 × 64 field with
+per-piece range metadata. Verification gates enforced on write (and
+re-checked by `pytest -q tests/test_fiber_norms.py`):
+
+- rook field is identically zero (tol 1e-9)
+- each piece's field is D4-invariant under the 8 symmetries of the
+  square
+- bishop-queen cosine > 0.999999
+- knight corner a1 < center d4
+
 ## Corpus format
 
 Each corpus is a `.7z` archive containing:
@@ -208,11 +267,13 @@ chess-maths-viewer/
 │   ├── opfs.js           Origin Private File System cache for per-game entries
 │   ├── board.js          chessboard.js driver, FEN sync, playback
 │   ├── chess-overlay.js  Paints per-square channel tint into chessboard.js squares
+│   ├── fiber-overlay.js  Static rank-3 fiber-norm overlay (per piece type)
 │   ├── othello-board.js  SVG driver for Othello corpora (swap-in for board.js)
 │   ├── spectral.js       Channel registry, canvas heatmap renderer
 │   ├── charts.js         D3 line chart, eval overlay, crosshair tooltip
 │   ├── lru.js            LRU eviction for parsed game state
 │   └── virtual-table.js  Virtual scroller for the corpus table
+├── data/                 Static assets generated offline (fiber_norms.json)
 ├── dataset/              Bundled .7z corpora + generated index.json
 ├── scripts/              Dev utilities (run with node ≥18)
 └── lib/                  Vendored JS libraries
@@ -231,8 +292,10 @@ External dependencies (CDN, no install required):
 Two test suites run in CI (see `.github/workflows/ci.yml`):
 
 - **Python** — `pytest -q` exercises the bundled `othello` library
-  (`tests/test_board.py`, `tests/test_svg.py`). Requires the dev extra:
-  `pip install -e '.[dev]'`.
+  (`tests/test_board.py`, `tests/test_svg.py`) and the fiber-norm data
+  file (`tests/test_fiber_norms.py` — rook-is-zero, D4 symmetry,
+  bishop-queen parallel, range metadata consistency). Requires the
+  dev extra: `pip install -e '.[dev]'`.
 - **JavaScript** — `npm test` runs a [vitest](https://vitest.dev/)
   suite under `tests-js/`:
     - `lru.test.js` — eviction order, pin safety, error tolerance of

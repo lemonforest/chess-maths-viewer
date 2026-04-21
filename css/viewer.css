@@ -1013,6 +1013,16 @@ button { font-family: inherit; }
   background: var(--bg-1);
   border-top: 1px solid var(--line);
 }
+#footer .footer-link {
+  color: var(--fg-2);
+  text-decoration: none;
+  border-bottom: 1px dotted var(--line);
+  transition: color 120ms, border-color 120ms;
+}
+#footer .footer-link:hover {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
 
 /* ------------------------------------------------------------------------- *
  * State machine
